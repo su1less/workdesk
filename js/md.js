@@ -431,29 +431,81 @@ const MD = {
     return md;
   },
 
-  /* ---------- Markdown 轻量渲染（报告预览） ---------- */
+  /* ---------- Markdown 渲染（文档/报告预览，含代码块、图片、表格） ---------- */
   render(src) {
-    const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const inline = s => esc(s)
+      .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, '<img src="$2" alt="$1" loading="lazy">')
+      .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
       .replace(/`([^`]+)`/g, '<code>$1</code>')
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-      .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
-    const lines = src.split('\n');
-    let html = '', inList = false, para = [];
+      .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+      .replace(/~~([^~]+)~~/g, '<del>$1</del>');
+    const lines = String(src).split('\n');
+    let html = '', inList = false, para = [], inCode = false, codeBuf = [], codeLang = '';
+    let tblBuf = [];
     const flushP = () => { if (para.length) { html += '<p>' + inline(para.join(' ')) + '</p>'; para = []; } };
     const closeList = () => { if (inList) { html += '</ul>'; inList = false; } };
+    const flushCode = () => {
+      html += '<pre><code' + (codeLang ? ' class="lang-' + esc(codeLang) + '"' : '') + '>' + esc(codeBuf.join('\n')) + '</code></pre>';
+      codeBuf = [];
+    };
+    const flushTable = () => {
+      if (!tblBuf.length) return;
+      const rows = tblBuf.map(r => r.replace(/^\||\|$/g, '').split('|').map(c => c.trim()));
+      tblBuf = [];
+      if (rows.length < 2 || !rows[1].every(c => /^:?-{2,}:?$/.test(c))) {
+        rows.forEach(r => { html += '<p>' + inline(r.join(' | ')) + '</p>'; });
+        return;
+      }
+      const head = rows[0], body = rows.slice(2);
+      html += '<table><thead><tr>' + head.map(h => '<th>' + inline(h) + '</th>').join('') + '</tr></thead><tbody>' +
+        body.map(r => '<tr>' + r.map(c => '<td>' + inline(c) + '</td>').join('') + '</tr>').join('') + '</tbody></table>';
+    };
     for (const line of lines) {
       const t = line.trim();
+      /* 代码围栏 */
+      if (inCode) {
+        if (/^```/.test(t)) { flushCode(); inCode = false; } else codeBuf.push(line);
+        continue;
+      }
+      if (/^```/.test(t)) { flushP(); closeList(); flushTable(); inCode = true; codeLang = t.slice(3).trim(); continue; }
+      /* 表格行 */
+      if (/^\|.*\|$/.test(t)) { flushP(); closeList(); tblBuf.push(t); continue; }
+      flushTable();
       if (!t) { flushP(); closeList(); continue; }
       let m;
       if ((m = t.match(/^(#{1,4})\s+(.*)$/))) { flushP(); closeList(); html += '<h' + (m[1].length + 1) + '>' + inline(m[2]) + '</h' + (m[1].length + 1) + '>'; continue; }
       if (/^(---|\*\*\*)$/.test(t)) { flushP(); closeList(); html += '<hr>'; continue; }
       if ((m = t.match(/^&gt;\s?(.*)$/)) || (m = t.match(/^>\s?(.*)$/))) { flushP(); closeList(); html += '<blockquote>' + inline(m[1]) + '</blockquote>'; continue; }
-      if ((m = t.match(/^[-*+]\s+(.*)$/))) { flushP(); if (!inList) { html += '<ul>'; inList = true; } html += '<li>' + inline(m[1].replace(/^\[( |x|X)\]\s*/, (_, c) => c.trim() ? '✔ ' : '○ ')) + '</li>'; continue; }
+      if ((m = t.match(/^[-*+]\s+(.*)$/))) {
+        flushP();
+        if (!inList) { html += '<ul>'; inList = true; }
+        html += '<li>' + inline(m[1].replace(/^\[( |x|X)\]\s*/, (_, c) => c.trim() ? '✔ ' : '○ ')) + '</li>';
+        continue;
+      }
       if (/^(\s{2,})[-*+]\s+/.test(line)) { html += '<li style="margin-left:18px">' + inline(line.trim().replace(/^[-*+]\s+/, '')) + '</li>'; continue; }
       para.push(t);
     }
-    flushP(); closeList();
+    if (inCode) flushCode();
+    flushTable();
+    flushP();
+    closeList();
     return html;
+  },
+
+  /* 渲染后在容器上启用 KaTeX 公式（$$块级 / $行内） */
+  typeset(el) {
+    if (typeof renderMathInElement === 'function') {
+      try {
+        renderMathInElement(el, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          throwOnError: false
+        });
+      } catch (e) { /* 公式语法错误时保持原文 */ }
+    }
   }
 };

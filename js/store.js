@@ -85,6 +85,10 @@ const Store = {
       abstract: '', note: '', readAt: null, source: '',
       createdAt: Date.now(), updatedAt: Date.now()
     }, r));
+    this.db.docs = (this.db.docs || []).map(d => Object.assign({
+      id: this.uid(), title: '未命名文档', sub: '', type: 'week', content: '',
+      createdAt: Date.now(), updatedAt: Date.now()
+    }, d));
   },
 
   /* 访客只读模式：加载分享数据，不落本地存储，锁定修改 */
@@ -199,6 +203,29 @@ const Store = {
 
   deleteRef(id) { this.db.refs = this.db.refs.filter(r => r.id !== id); this.save(); },
 
+  /* ---------- 文档（周报/月报）CRUD ---------- */
+  addDoc(p) {
+    const d = Object.assign({
+      id: this.uid(), title: '未命名文档', sub: '', type: 'week', content: '',
+      createdAt: Date.now(), updatedAt: Date.now()
+    }, p);
+    this.db.docs.push(d);
+    this.save();
+    return d;
+  },
+
+  getDoc(id) { return (this.db.docs || []).find(d => d.id === id); },
+
+  updateDoc(id, patch) {
+    const d = this.getDoc(id);
+    if (!d) return null;
+    Object.assign(d, patch, { updatedAt: Date.now() });
+    this.save();
+    return d;
+  },
+
+  deleteDoc(id) { this.db.docs = this.db.docs.filter(d => d.id !== id); this.save(); },
+
   refStats() {
     const list = this.db.refs || [];
     const c = s => list.filter(r => r.status === s).length;
@@ -309,6 +336,43 @@ const Store = {
     ];
   },
 
+  _seedDocs() {
+    const ws = U.weekStart(U.todayStr());
+    const we = U.weekEnd(U.todayStr());
+    const wk = U.isoWeekNumber(ws);
+    return [{
+      title: '周报（示例）：可以怎么写',
+      sub: `第 ${wk} 周 · ${U.fmtCN(ws)} ~ ${U.fmtCN(we)}`,
+      type: 'week',
+      content: `# 周报（示例）
+
+> 这一页演示文档编辑器的能力：图片、公式、代码块都可以写。
+
+## 一、本周进展
+- 完成了 A 模块的开发与联调
+- 实验准确率提升到 92.4%
+
+## 二、关键指标
+损失函数收敛情况（行内公式 $L = -\\sum_i y_i \\log \\hat{y}_i$），整体目标为：
+
+$$J(\\theta) = \\frac{1}{2m}\\sum_{i=1}^{m}\\left(h_\\theta(x^{(i)}) - y^{(i)}\\right)^2 + \\lambda\\|\\theta\\|_2^2$$
+
+## 三、核心代码片段
+
+\`\`\`python
+def evaluate(model, loader):
+    model.eval()
+    correct = sum((model(x).argmax(1) == y).sum().item() for x, y in loader)
+    return correct / len(loader.dataset)
+\`\`\`
+
+## 四、下周计划
+- [ ] 补充消融实验
+- [ ] 整理图表写进月报
+`
+    }];
+  },
+
   _seed() {
     const T = U.todayStr(), Y = U.addDays(T, -1), TM = U.addDays(T, 1);
     const WS = U.weekStart(T), MK = U.monthKey(T);
@@ -318,6 +382,7 @@ const Store = {
       meta: { lastBriefDate: '', seededAt: Date.now() },
       settings: { workingStart: '07:00', workingEnd: '23:00', theme: 'light' },
       refs: this._seedRefs(),
+      docs: this._seedDocs(),
       tasks: [
         /* —— 今日固定日程 —— */
         mk({ kind: 'event', title: '每日晨会', start: '09:30', end: '10:00', fixed: true, note: '同步各组进展，腾讯会议' }),

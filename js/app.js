@@ -12,6 +12,7 @@ const App = {
     month: U.monthKey(U.todayStr()),
     lib: { q: '', level: '', status: '', tag: '' },
     refs: { q: '', status: '', type: '', tag: '', sort: 'added' },
+    docs: { filter: 'all', mode: 'list', editing: null, tab: 'edit' },
     report: { type: 'week', anchor: U.todayStr(), md: null, tab: 'preview' },
     import: null
   },
@@ -47,9 +48,11 @@ const App = {
       b.classList.toggle('active', b.dataset.nav === s.view));
     const map = {
       dashboard: UI.dashboard, today: UI.today, week: UI.week, month: UI.month,
-      library: UI.library, refs: UI.refsView, reports: UI.reports, import: UI.importView
+      library: UI.library, refs: UI.refsView, reports: UI.reports, docs: UI.docsView, import: UI.importView
     };
     document.getElementById('view').innerHTML = map[s.view].call(UI);
+    /* 文档编辑器：渲染预览 + 公式排版 */
+    if (s.view === 'docs' && s.docs.mode === 'edit') this.renderDocPreview();
     const subs = {
       dashboard: ['仪表盘', '总览今日安排、进度与延期事项'],
       today: ['今日', U.fmtFull(s.day) + ' ' + U.fmtWeekCN(s.day) + (s.day === U.todayStr() ? ' · 今天' : '')],
@@ -57,6 +60,7 @@ const App = {
       month: ['本月', s.month.replace('-', ' 年 ') + ' 月'],
       library: ['任务库', '全部任务的检索与管理'],
       refs: ['文献管理', '文献阅读追踪与 BibTeX 导入导出'],
+      docs: ['周报月报', 'Markdown 文档写作：支持图片、LaTeX 公式、代码块'],
       reports: ['进度报告', '周报 / 月报自动生成，支持导出 Markdown'],
       import: ['导入计划', '解析 Markdown 计划文档，一键生成任务与进度安排']
     };
@@ -112,6 +116,14 @@ const App = {
       } else if (k === 'rProg') {
         const v = document.getElementById('rProgVal');
         if (v) v.textContent = el.value + '%';
+      } else if (k === 'doc-ta') {
+        this.docAutosave('content', el.value);
+        clearTimeout(this._docPvTimer);
+        this._docPvTimer = setTimeout(() => this.renderDocPreview(), 350);
+      } else if (k === 'doc-title') {
+        this.docAutosave('title', el.value.trim() || '未命名文档');
+      } else if (k === 'doc-sub') {
+        this.docAutosave('sub', el.value.trim());
       } else if (k === 'ref-q') {
         this.state.refs.q = el.value;
         clearTimeout(this._rTimer);
@@ -173,6 +185,13 @@ const App = {
       case 'ref-type': s.refs.type = el.value; this.render(); break;
       case 'ref-tag': s.refs.tag = el.value; this.render(); break;
       case 'ref-sort': s.refs.sort = el.value; this.render(); break;
+      case 'doc-type': this._docPatch({ type: el.value }); this.render(); break;
+      case 'doc-img-file': {
+        const f = el.files[0];
+        if (f) this.docInsertImage(f);
+        el.value = '';
+        break;
+      }
       case 'bib-file': {
         const f = el.files[0];
         if (!f) return;
@@ -235,6 +254,7 @@ const App = {
             <button data-act="go" data-v="library"><span class="mi-icon">🗂️</span>任务库</button>
             <button data-act="go" data-v="refs"><span class="mi-icon">📚</span>文献管理</button>
             <button data-act="go" data-v="reports"><span class="mi-icon">📄</span>进度报告</button>
+            <button data-act="go" data-v="docs"><span class="mi-icon">📝</span>周报月报</button>
             <button data-act="go" data-v="import"><span class="mi-icon">📥</span>导入计划</button>
             <button data-act="open-settings"><span class="mi-icon">⚙️</span>设置</button>
             <button data-act="toggle-theme"><span class="mi-icon">🌙</span>深色 / 浅色切换</button>
@@ -445,6 +465,64 @@ const App = {
         break;
       }
 
+      /* --- 周报月报（文档写作） --- */
+      case 'doc-filter': s.docs.filter = el.dataset.v; s.docs.mode = 'list'; this.render(); break;
+      case 'doc-new': {
+        const type = el.dataset.v || 'week';
+        let title, sub;
+        const t = U.todayStr();
+        if (type === 'week') {
+          const ws = U.weekStart(t);
+          title = '周报 · 第 ' + U.isoWeekNumber(ws) + ' 周';
+          sub = U.fmtCN(ws) + ' ~ ' + U.fmtCN(U.weekEnd(ws));
+        } else if (type === 'month') {
+          title = t.slice(0, 7).replace('-', '年') + '月报';
+          sub = '';
+        } else { title = '新建文档'; sub = ''; }
+        const d = Store.addDoc({ type, title, sub, content: '# ' + title + '\n\n## 一、\n\n## 二、\n\n## 三、\n' });
+        s.docs.editing = d.id; s.docs.mode = 'edit'; s.docs.tab = 'edit';
+        this.render();
+        const ti = document.getElementById('docTa');
+        if (ti) { ti.focus(); ti.setSelectionRange(ti.value.length, ti.value.length); }
+        break;
+      }
+      case 'doc-open': s.docs.editing = el.dataset.id; s.docs.mode = 'edit'; s.docs.tab = 'edit'; this.render(); break;
+      case 'doc-back': this.docSaveNow(); s.docs.mode = 'list'; this.render(); break;
+      case 'doc-tab': s.docs.tab = el.dataset.v; this.docSaveNow(); this.render(); break;
+      case 'doc-del': {
+        UI.confirm('确定删除这篇文档吗？无法恢复。', { danger: true, okText: '删除' }).then(ok => {
+          if (ok) {
+            this.docSaveNow();
+            Store.deleteDoc(s.docs.editing);
+            s.docs.mode = 'list';
+            UI.toast('文档已删除');
+            this.render();
+          }
+        });
+        break;
+      }
+      case 'doc-ins': {
+        if (el.dataset.b === '' && el.dataset.a === '' && el.dataset.p === '') { this.docPickImage(); break; }
+        this.docInsert(el.dataset.b, el.dataset.a, el.dataset.p);
+        break;
+      }
+      case 'rep-todoc': {
+        const md = s.report.md || MD.report(s.report.type, s.report.anchor);
+        const range = s.report.type === 'week'
+          ? U.fmtCN(U.weekStart(s.report.anchor)) + ' ~ ' + U.fmtCN(U.weekEnd(s.report.anchor))
+          : s.report.anchor.slice(0, 7).replace('-', '年') + '月';
+        Store.addDoc({
+          type: s.report.type,
+          title: (s.report.type === 'week' ? '周报（自动汇总）· 第 ' + U.isoWeekNumber(U.weekStart(s.report.anchor)) + ' 周'
+            : '月报（自动汇总）· ' + s.report.anchor.slice(0, 7).replace('-', '年') + '月'),
+          sub: range, content: md
+        });
+        UI.toast('已存为可编辑文档，可在此基础上补充图片与公式');
+        s.docs.mode = 'list';
+        this.go('docs');
+        break;
+      }
+
       /* --- 报告 --- */
       case 'rep-type': s.report.type = el.dataset.v; s.report.md = null; this.render(); break;
       case 'rep-shift': {
@@ -532,7 +610,8 @@ const App = {
     'ref-save', 'ref-delete', 'ref-cycle', 'ref-task', 'bib-do',
     'gate-save', 'gate-clear', 'share-save', 'share-clear',
     'gh-save', 'gh-disconnect', 'sync-logout',
-    'set-import', 'set-demo', 'set-clear', 'add-task-on', 'add-task-new', 'add-week-task', 'add-month-task'
+    'set-import', 'set-demo', 'set-clear', 'add-task-on', 'add-task-new', 'add-week-task', 'add-month-task',
+    'doc-new', 'doc-del', 'rep-todoc'
   ]),
 
   /* ---------- 快速添加 ---------- */
@@ -676,6 +755,103 @@ const App = {
     else { Store.addRef(patch); UI.toast('已添加文献'); }
     UI.closeModal();
     this.render();
+  },
+
+  /* ---------- 周报月报：编辑器辅助 ---------- */
+  renderDocPreview() {
+    const pv = document.getElementById('docPv');
+    const ta = document.getElementById('docTa');
+    if (!pv) return;
+    pv.innerHTML = MD.render(ta ? ta.value : (Store.getDoc(this.state.docs.editing) || {}).content || '');
+    MD.typeset(pv);
+  },
+
+  _docPatch(patch) {
+    if (Store.readOnly) return;
+    Store.updateDoc(this.state.docs.editing, patch);
+  },
+
+  /* 输入防抖保存：仅更新数据与预览，不重渲染视图（保住光标） */
+  docAutosave(field, value) {
+    if (Store.readOnly) return;
+    clearTimeout(this._docTimer);
+    this._docTimer = setTimeout(() => {
+      this._docPatch({ [field]: value });
+      if (field === 'content') this.renderDocPreview();
+    }, 700);
+  },
+
+  docSaveNow() {
+    if (this._docTimer) {
+      clearTimeout(this._docTimer);
+      this._docTimer = null;
+      /* 从 DOM 取最新值立即保存 */
+      const ta = document.getElementById('docTa');
+      const ti = document.getElementById('docTitle');
+      const su = document.getElementById('docSub');
+      const patch = {};
+      if (ta) patch.content = ta.value;
+      if (ti) patch.title = ti.value.trim() || '未命名文档';
+      if (su) patch.sub = su.value.trim();
+      if (Object.keys(patch).length && !Store.readOnly) Store.updateDoc(this.state.docs.editing, patch);
+    }
+  },
+
+  /* 在光标处插入 Markdown 片段 */
+  docInsert(before, after, placeholder) {
+    const ta = document.getElementById('docTa');
+    if (!ta || Store.readOnly) return;
+    const s0 = ta.selectionStart ?? ta.value.length;
+    const e0 = ta.selectionEnd ?? s0;
+    const sel = ta.value.slice(s0, e0) || placeholder || '';
+    ta.setRangeText(before + sel + after, s0, e0, 'end');
+    ta.focus();
+    clearTimeout(this._docTimer);
+    this._docPatch({ content: ta.value });
+    this.renderDocPreview();
+  },
+
+  docPickImage() {
+    const fi = document.getElementById('docImg');
+    if (fi) fi.click();
+  },
+
+  /* 本地图片 → 压缩内嵌 data URL → 插入文档 */
+  compressImage(file) {
+    return new Promise((resolve, reject) => {
+      const rd = new FileReader();
+      rd.onerror = reject;
+      rd.onload = () => {
+        const dataUrl = rd.result;
+        /* 小图直接用；大图等比压缩（最长边 1000px，JPEG 72%） */
+        if (file.size < 150 * 1024) return resolve(dataUrl);
+        const img = new Image();
+        img.onerror = () => resolve(dataUrl);
+        img.onload = () => {
+          try {
+            const scale = Math.min(1, 1000 / Math.max(img.width, img.height));
+            const cv = document.createElement('canvas');
+            cv.width = Math.round(img.width * scale);
+            cv.height = Math.round(img.height * scale);
+            cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+            resolve(cv.toDataURL('image/jpeg', 0.72));
+          } catch (e) { resolve(dataUrl); }
+        };
+        img.src = dataUrl;
+      };
+      rd.readAsDataURL(file);
+    });
+  },
+
+  async docInsertImage(file) {
+    try {
+      UI.toast('正在处理图片…');
+      const dataUrl = await this.compressImage(file);
+      if (dataUrl.length > 400 * 1024) UI.toast('图片较大（' + Math.round(dataUrl.length / 1024) + 'KB），已内嵌；注意文档总量', 'warn');
+      this.docInsert('\n![图片](', ')' + '\n', dataUrl);
+    } catch (e) {
+      UI.toast('图片读取失败', 'err');
+    }
   },
 
   /* ---------- 突发日程 ---------- */

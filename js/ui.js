@@ -511,6 +511,7 @@ const UI = {
             <button class="${r.tab === 'src' ? 'active' : ''}" data-act="rep-tab" data-v="src">Markdown</button>
           </div>
           <button class="btn btn-ghost btn-sm" data-act="rep-copy">复制</button>
+          <button class="btn btn-ghost btn-sm" data-act="rep-todoc" title="存入周报月报，可继续编辑并插入图片公式">📝 存为文档</button>
           <button class="btn btn-ghost btn-sm" data-act="rep-download">下载 .md</button>
         </div>
         ${r.tab === 'src' ? `<textarea class="report-src" data-act-input="rep-src">${UI.esc(r.md)}</textarea>`
@@ -794,5 +795,101 @@ const UI = {
           </div>
         </div>`
     });
+  },
+
+  /* ============ 视图：周报月报（文档写作） ============ */
+  DOCTYPE: { week: { l: '周报', c: 'chip-teal' }, month: { l: '月报', c: 'chip-purple' }, other: { l: '文档', c: 'chip-gray' } },
+
+  docsView() {
+    const s = App.state.docs;
+    if (s.mode === 'edit') return UI.docEditor();
+    const f = s.filter;
+    let list = (Store.db.docs || []).slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    if (f !== 'all') list = list.filter(d => d.type === f);
+    const total = (Store.db.docs || []).length;
+    const cnt = t => (Store.db.docs || []).filter(d => d.type === t).length;
+    const snippet = c => String(c || '')
+      .replace(/```[\s\S]*?```/g, ' ').replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+      .replace(/[#>*`~$\[\]()!|-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 86);
+
+    return `
+    <div class="filter-bar">
+      <button class="chip ${f === 'all' ? 'chip-purple' : 'chip-gray'}" style="font-size:12px;padding:6px 12px;cursor:pointer" data-act="doc-filter" data-v="all">全部 ${total}</button>
+      ${Object.entries(UI.DOCTYPE).map(([k, v]) =>
+        `<button class="chip ${f === k ? 'chip-purple' : 'chip-gray'}" style="font-size:12px;padding:6px 12px;cursor:pointer" data-act="doc-filter" data-v="${k}">${v.l} ${cnt(k)}</button>`).join('')}
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <button class="btn btn-primary btn-sm" data-act="doc-new" data-v="week">＋ 周报</button>
+        <button class="btn btn-primary btn-sm" data-act="doc-new" data-v="month">＋ 月报</button>
+      </div>
+    </div>
+    ${list.length ? `<div class="ref-grid">
+      ${list.map(d => {
+        const ty = UI.DOCTYPE[d.type] || UI.DOCTYPE.other;
+        return `<div class="doc-card" data-act="doc-open" data-id="${d.id}">
+          <div class="ref-top">
+            <span class="chip ${ty.c}">${ty.l}</span>
+            ${d.sub ? `<span class="doc-sub">${UI.esc(d.sub)}</span>` : ''}
+            <span class="doc-time">${U.relDay(U.dateStr(new Date(d.updatedAt || Date.now())))}</span>
+          </div>
+          <div class="doc-title">${UI.esc(d.title)}</div>
+          ${snippet(d.content) ? `<div class="doc-snippet">${UI.esc(snippet(d.content))}</div>` : ''}
+        </div>`;
+      }).join('')}
+    </div>` : UI.empty('📝', '还没有周报 / 月报', '新建一篇，支持图片、LaTeX 公式和代码块',
+      `<button class="btn btn-primary btn-sm" data-act="doc-new" data-v="week">＋ 新建周报</button>`)}`;
+  },
+
+  docEditor() {
+    const d = Store.getDoc(App.state.docs.editing);
+    if (!d) return UI.empty('🤔', '文档不存在', '可能已被删除', `<button class="btn btn-primary btn-sm" data-act="doc-back">返回列表</button>`);
+    const ro = !!Store.readOnly;
+    const tab = App.state.docs.tab || 'edit';
+
+    const tb = (label, title, b, a, p) =>
+      `<button class="de-tbtn" title="${title}" ${ro ? 'disabled' : ''} data-act="doc-ins" data-b="${UI.esc(b || '')}" data-a="${UI.esc(a || '')}" data-p="${UI.esc(p || '')}">${label}</button>`;
+
+    return `
+    <div class="doc-editor">
+      <div class="de-head">
+        <button class="icon-btn" data-act="doc-back" title="返回列表">
+          <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        ${ro ? '' : `<input id="docTitle" type="text" value="${UI.esc(d.title)}" placeholder="标题" data-act-input="doc-title">
+        <input id="docSub" type="text" value="${UI.esc(d.sub)}" placeholder="期号 / 时间段（可选）" data-act-input="doc-sub">
+        <select id="docType" data-act-change="doc-type">
+          ${Object.entries(UI.DOCTYPE).map(([k, v]) => `<option value="${k}" ${d.type === k ? 'selected' : ''}>${v.l}</option>`).join('')}
+        </select>`}
+        ${ro ? `<span class="chip chip-gray">👁 只读</span>` : ''}
+        <div class="de-mode">
+          <button class="${tab === 'edit' ? 'active' : ''}" data-act="doc-tab" data-v="edit">编辑</button>
+          <button class="${tab === 'preview' ? 'active' : ''}" data-act="doc-tab" data-v="preview">预览</button>
+        </div>
+        ${ro ? '' : `<button class="icon-btn" data-act="doc-del" title="删除文档" style="color:var(--red)">
+          <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        </button>`}
+      </div>
+      ${ro ? '' : `
+      <div class="de-toolbar">
+        ${tb('H1', '一级标题', '# ', '', '标题')}
+        ${tb('H2', '二级标题', '## ', '', '标题')}
+        ${tb('B', '粗体', '**', '**', '粗体')}
+        ${tb('I', '斜体', '*', '*', '斜体')}
+        ${tb('S', '删除线', '~~', '~~', '删除线')}
+        ${tb('•', '无序列表', '- ', '', '事项')}
+        ${tb('☑', '任务清单', '- [ ] ', '', '待办事项')}
+        ${tb('</>', '代码块', '\n```python\n', '\n```\n', 'print("hello")')}
+        ${tb('$x', '行内公式', '$', '$', 'E=mc^2')}
+        ${tb('$$', '块级公式', '\n$$\n', '\n$$\n', '\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}')}
+        ${tb('🖼', '插入图片', '', '', '')}
+        ${tb('🔗', '链接', '[', '](https://)', '链接文字')}
+        ${tb('▦', '表格', '\n| 列1 | 列2 | 列3 |\n| --- | --- | --- |\n| ', ' |  |  |\n', '内容')}
+        ${tb('❝', '引用', '\n> ', '\n', '引用内容')}
+      </div>`}
+      <div class="de-body" data-tab="${tab}">
+        ${ro ? '' : `<textarea id="docTa" spellcheck="false" placeholder="在这里用 Markdown 写周报 / 月报…" data-act-input="doc-ta">${UI.esc(d.content)}</textarea>`}
+        <div class="md-preview de-preview" id="docPv"></div>
+      </div>
+      ${ro ? '' : `<input type="file" id="docImg" accept="image/*" style="display:none" data-act-change="doc-img-file">`}
+    </div>`;
   }
 };

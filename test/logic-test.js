@@ -237,6 +237,20 @@ t('b64 大文本往返（分块）', Sync.b64decode(Sync.b64encode(big)) === big
   const shEnc = await Sync.encryptText(k1.key, shPlain);
   const shFile = 'WBENC1:' + shEnc;   /* 入库文件格式 */
   t('分享数据加解密往返', (await Sync.decryptText(k2.key, shFile.slice(7))) === shPlain);
+  /* 文档模块：MD.render 升级 + docs CRUD */
+  const mdHtml = MD.render('# 标题\n\n```python\nprint("<b>hi</b>")\n```\n\n![图](data:image/png;base64,AAA)\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\n$E=mc^2$ ~~删~~');
+  t('代码块渲染+转义', mdHtml.includes('<pre><code class="lang-python">print("&lt;b&gt;hi&lt;/b&gt;")') );
+  t('图片渲染', mdHtml.includes('<img src="data:image/png;base64,AAA"'));
+  t('表格渲染', mdHtml.includes('<table>') && mdHtml.includes('<th>A</th>') && mdHtml.includes('<td>2</td>'));
+  t('删除线', mdHtml.includes('<del>删</del>'));
+  t('公式原文保留（KaTeX 前端排版）', mdHtml.includes('$E=mc^2$'));
+  Store.db.docs = [];
+  const doc1 = Store.addDoc({ title: '测试周报', type: 'week', content: '# hi' });
+  t('addDoc', Store.getDoc(doc1.id).title === '测试周报');
+  Store.updateDoc(doc1.id, { content: '# changed' });
+  t('updateDoc', Store.getDoc(doc1.id).content === '# changed');
+  Store.deleteDoc(doc1.id);
+  t('deleteDoc', !Store.getDoc(doc1.id));
   finish();
 })();
 
