@@ -1,0 +1,6 @@
+# 自建服务器模式的本地密码配置与数据（含隐私，勿提交）
+server-config.json
+data/
+
+node_modules/
+*.log
