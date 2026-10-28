@@ -8,8 +8,10 @@
  *   WORKBENCH_PASSWORD=xxx node server.js   # 用环境变量当密码（适合托管平台）
  *
  * 功能：静态文件托管 + 单密码登录 + 数据云端存储（data/db.json）
- * 安全：密码 scrypt 哈希存储、HMAC 签名令牌（30 天）、登录限速、
- *       data/ 与 server-config.json 禁止外部访问、请求体上限 8MB。
+ *       + 只读分享（网址+分享密码给老师只读查看，数据实时刷新）
+ *       + 文档原图存储（assets/ 单独文件，不压缩、不进数据文件）
+ * 安全：密码 scrypt 哈希存储、HMAC 签名令牌（30 天，站长/只读分离）、
+ *       登录与分享验证限速、data/ 禁止外部访问、请求体上限 32MB。
  * 提示：公网部署请务必套 HTTPS（推荐 Caddy 或 Nginx 反向代理）。
  * ============================================================ */
 'use strict';
@@ -20,12 +22,14 @@ const path = require('path');
 const crypto = require('crypto');
 
 const ROOT = __dirname;
-const DATA_DIR = path.join(ROOT, 'data');
+/* WB_DATA_DIR / WB_ASSET_DIR 供测试与自定义挂载点使用 */
+const DATA_DIR = process.env.WB_DATA_DIR ? path.resolve(process.env.WB_DATA_DIR) : path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const CONFIG_FILE = path.join(DATA_DIR, 'server-config.json');   /* 放 data/ 内，容器/备份时随数据一起持久化 */
+const ASSET_DIR = process.env.WB_ASSET_DIR ? path.resolve(process.env.WB_ASSET_DIR) : path.join(ROOT, 'assets');
 const PORT = Number(process.env.PORT) || 8765;
 const SESSION_MS = 30 * 24 * 3600 * 1000;
-const MAX_BODY = 8 * 1024 * 1024;
+const MAX_BODY = 32 * 1024 * 1024;   /* 放宽以支持原图上传（base64 约膨胀 1/3） */
 
 /* ---------- 密码 / 令牌 ---------- */
 const rand = n => crypto.randomBytes(n).toString('hex');
@@ -57,11 +61,18 @@ function loadConfig() {
     };
   }
   try {
-    return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    const cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    if (cfg && cfg.salt && cfg.hash && cfg.secret) return cfg;
+    throw new Error('incomplete');
   } catch (e) {
+    /* 文件缺失/不完整（例如先在环境变量模式下设过分享）：生成新密码但保留已有分享配置 */
+    let keepShare = null;
+    try { keepShare = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')).share || null; } catch (_) {}
     const pw = rand(2) + '-' + rand(2) + '-' + rand(2);
     const cfg = { salt: rand(16), hash: '', secret: rand(32) };
     cfg.hash = scrypt(pw, cfg.salt);
+    if (keepShare) cfg.share = keepShare;
+    fs.mkdirSync(DATA_DIR, { recursive: true });
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
     console.log('\n============================================');
     console.log('  首次启动，已生成初始访问密码：');
@@ -84,11 +95,15 @@ function verifyToken(token) {
   if (i < 0) return false;
   const b = s.slice(0, i), sig = s.slice(i + 1);
   if (!safeEq(sig, crypto.createHmac('sha256', config.secret).update(b).toString('base64url'))) return false;
-  try { return JSON.parse(Buffer.from(b, 'base64url').toString()).exp > Date.now(); } catch (e) { return false; }
+  try { const p = JSON.parse(Buffer.from(b, 'base64url').toString()); return p.exp > Date.now() ? p : false; }
+  catch (e) { return false; }
 }
-function authed(req) {
+/* type 省略 = 站长令牌（无类型标记）；'s' = 只读分享令牌 */
+function authed(req, type) {
   const m = /^Bearer\s+(.+)$/i.exec(req.headers.authorization || '');
-  return !!(m && verifyToken(m[1]));
+  const p = m && verifyToken(m[1]);
+  if (!p) return false;
+  return type ? p.t === type : !p.t;
 }
 
 /* ---------- 登录限速（每 IP：6 次错误锁 15 分钟） ---------- */
@@ -110,6 +125,16 @@ function writeDB(db) {
   fs.writeFileSync(tmp, JSON.stringify({ db, serverUpdatedAt: now }));
   fs.renameSync(tmp, DB_FILE);
   return now;
+}
+
+/* ---------- 只读分享（分享密码哈希存在 CONFIG_FILE 的 share 段） ---------- */
+function readCfgFile() {
+  try { const c = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); return c && typeof c === 'object' ? c : {}; }
+  catch (e) { return {}; }
+}
+function shareOn() {
+  const s = readCfgFile().share;
+  return !!(s && s.enabled && s.salt && s.hash);
 }
 
 /* ---------- 工具 ---------- */
@@ -152,9 +177,12 @@ function serveStatic(req, res, pathname) {
   let p;
   try { p = decodeURIComponent(pathname); } catch (e) { res.writeHead(400); return res.end(); }
   if (p === '/') p = '/index.html';
-  const fp = path.normalize(path.join(ROOT, p));
-  if (!fp.startsWith(ROOT + path.sep)) { res.writeHead(403); return res.end('Forbidden'); }
-  const rel = path.relative(ROOT, fp).split(path.sep).join('/');
+  /* /assets/ 前缀映射到 ASSET_DIR（测试/自定义挂载点时可与站点目录分离） */
+  let rootDir = ROOT, relPath = p;
+  if (p.startsWith('/assets/')) { rootDir = ASSET_DIR; relPath = p.slice('/assets/'.length); }
+  const fp = path.normalize(path.join(rootDir, relPath));
+  if (!fp.startsWith(rootDir + path.sep)) { res.writeHead(403); return res.end('Forbidden'); }
+  const rel = path.relative(rootDir, fp).split(path.sep).join('/');
   if (BLOCKED(rel)) { res.writeHead(403); return res.end('Forbidden'); }
   fs.readFile(fp, (err, buf) => {
     if (err) {
@@ -164,7 +192,10 @@ function serveStatic(req, res, pathname) {
     const ext = path.extname(fp).toLowerCase();
     res.writeHead(200, {
       'Content-Type': MIME[ext] || 'application/octet-stream',
-      'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=3600'
+      /* html/js/css 短缓存：升级后 5 分钟内全端生效；字体图片等长缓存 */
+      'Cache-Control': ext === '.html' ? 'no-cache'
+        : (ext === '.js' || ext === '.css') ? 'public, max-age=300'
+        : 'public, max-age=3600'
     });
     res.end(req.method === 'HEAD' ? undefined : buf);
   });
@@ -172,7 +203,7 @@ function serveStatic(req, res, pathname) {
 
 /* ---------- API ---------- */
 async function handleAPI(req, res, u) {
-  const ep = (u.pathname.match(/\/api\/([^/]+)$/) || [])[1] || '';
+  const ep = u.pathname.replace(/^\/api\//, '').replace(/\/+$/, '');
   const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '?').split(',')[0].trim();
 
   if (ep === 'login' && req.method === 'POST') {
@@ -208,6 +239,71 @@ async function handleAPI(req, res, u) {
       if (typeof db !== 'object') return sendJSON(res, 400, { error: '数据格式不正确' });
       return sendJSON(res, 200, { serverUpdatedAt: writeDB(db) });
     }
+  }
+
+  /* ===== 只读分享（老师：网址 + 分享密码 → 只读视图） ===== */
+
+  if (ep === 'share/config' && req.method === 'GET') {
+    return sendJSON(res, 200, { enabled: shareOn() });
+  }
+
+  if (ep === 'share/verify' && req.method === 'POST') {
+    const key = ip + ':share';
+    const f = failState(key);
+    if (f.until > Date.now()) return sendJSON(res, 429, { error: '尝试次数过多，请 15 分钟后再试' });
+    let body;
+    try { body = await readBody(req); } catch (e) { return sendJSON(res, 400, { error: '请求格式错误' }); }
+    const s = readCfgFile().share;
+    if (!shareOn()) return sendJSON(res, 404, { error: '只读分享未开启' });
+    if (!body || body.password == null || !s || !safeEq(scrypt(body.password, s.salt), s.hash)) {
+      f.n++;
+      if (f.n >= 6) { f.until = Date.now() + 15 * 60000; f.n = 0; }
+      return sendJSON(res, 401, { error: '密码不正确' });
+    }
+    fails.delete(key);
+    return sendJSON(res, 200, { token: sign({ exp: Date.now() + SESSION_MS, t: 's' }) });
+  }
+
+  if (ep === 'share/data' && req.method === 'GET') {
+    if (!authed(req, 's')) return sendJSON(res, 401, { error: '无效的分享访问' });
+    if (!shareOn()) return sendJSON(res, 401, { error: '只读分享已停止' });   /* 停止分享后旧令牌立即失效 */
+    return sendJSON(res, 200, readDB() || { db: null, serverUpdatedAt: 0 });
+  }
+
+  if (ep === 'share/set' && req.method === 'POST') {
+    if (!authed(req)) return sendJSON(res, 401, { error: '未登录' });
+    let body;
+    try { body = await readBody(req); } catch (e) { return sendJSON(res, 400, { error: '请求格式错误' }); }
+    if (!body || typeof body.enabled !== 'boolean') return sendJSON(res, 400, { error: '参数不正确' });
+    const cfg = readCfgFile();
+    if (body.enabled) {
+      const pw = String(body.password || '');
+      if (pw.length < 4) return sendJSON(res, 400, { error: '分享密码至少 4 位' });
+      const salt = rand(16);
+      cfg.share = { enabled: true, salt, hash: scrypt(pw, salt) };
+    } else {
+      delete cfg.share;
+    }
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
+    return sendJSON(res, 200, { ok: true, enabled: body.enabled });
+  }
+
+  /* ===== 文档原图上传（站长；单独存 assets/，不进数据文件） ===== */
+
+  if (ep === 'asset' && req.method === 'POST') {
+    if (!authed(req)) return sendJSON(res, 401, { error: '未登录' });
+    let body;
+    try { body = await readBody(req); } catch (e) { return sendJSON(res, 400, { error: '请求格式错误' }); }
+    const ext = String((body && body.ext) || '').toLowerCase();
+    if (!/^(png|jpe?g|gif|webp)$/.test(ext)) return sendJSON(res, 400, { error: '不支持的图片格式' });
+    const b64 = String((body && body.data) || '').replace(/\s+/g, '');
+    if (!b64 || !/^[A-Za-z0-9+/]+={0,2}$/.test(b64)) return sendJSON(res, 400, { error: '图片数据无效' });
+    fs.mkdirSync(ASSET_DIR, { recursive: true });
+    const name = 'img-' + Date.now().toString(36) + crypto.randomBytes(3).toString('hex')
+      + (ext === 'jpeg' ? '.jpg' : '.' + ext);
+    fs.writeFileSync(path.join(ASSET_DIR, name), Buffer.from(b64, 'base64'));
+    return sendJSON(res, 200, { url: 'assets/' + name });
   }
 
   sendJSON(res, 404, { error: 'not found' });

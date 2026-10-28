@@ -2,5 +2,8 @@
 server-config.json
 data/
 
+# 服务器模式上传的文档原图（本地运行产物；GitHub 模式的仓库内 assets 由 API 直接写入，不受此影响）
+assets/
+
 node_modules/
 *.log

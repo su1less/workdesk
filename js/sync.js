@@ -24,6 +24,7 @@ const Sync = {
   _dirty: false,           // 有未上传到云端的本地修改（拉取不得覆盖）
   _dirtySeq: 0,            // 修改代际：推送期间又有新修改时，禁止清除脏标记
   _lastFailAt: 0,          // 上次失败提示时间（重试限频用）
+  guest: false,            // 服务器模式·只读访客（分享密码进入）
 
   headers() {
     const h = { 'Content-Type': 'application/json' };
@@ -39,7 +40,12 @@ const Sync = {
     try {
       const r = await fetch('api/ping', { headers: this.headers(), cache: 'no-store' });
       if ((r.headers.get('content-type') || '').includes('application/json')) {
-        if (r.status === 401) { this.loginUI(); return true; }
+        if (r.status === 401) {
+          /* 本机记住的只读分享令牌 → 直接恢复访客模式 */
+          if (localStorage.getItem('wb.share') && await this.enterGuest(true)) return true;
+          this.loginUI();
+          return true;
+        }
         const j = await r.json().catch(() => null);
         if (j && j.ok === true) {
           this.mode = 'server';
@@ -62,6 +68,24 @@ const Sync = {
   async pull() {
     /* 本地有未推送的修改时禁止采纳远端，防止把待上传的变更覆盖掉 */
     if (this._pushing || this._dirty) return;
+    /* 只读访客：拉取分享数据（实时只读） */
+    if (this.guest) {
+      try {
+        const r = await fetch('api/share/data', {
+          headers: { Authorization: 'Bearer ' + (localStorage.getItem('wb.share') || '') },
+          cache: 'no-store'
+        });
+        if (r.status === 401) {
+          this.guest = false;
+          localStorage.removeItem('wb.share');
+          this.loginUI('分享密码已失效，请重新输入');
+          return;
+        }
+        const j = await r.json();
+        if (j && j.db) Store.adoptGuest(j.db, j.serverUpdatedAt || 0);
+      } catch (e) { /* 网络波动，下轮再试 */ }
+      return;
+    }
     if (this.mode === 'server') {
       try {
         const r = await fetch('api/data', { headers: this.headers(), cache: 'no-store' });
@@ -88,7 +112,7 @@ const Sync = {
   },
 
   schedulePush() {
-    if (this.mode === 'local') return;
+    if (this.mode === 'local' || this.guest) return;
     this._dirty = true;
     this._dirtySeq++;
     clearTimeout(this._pushTimer);
@@ -416,10 +440,64 @@ const Sync = {
     }
   },
 
+  /* 图片上传：dataURL 原图 → 服务器 assets/（不压缩、不进数据文件），返回相对路径 */
+  async putAsset(dataUrl) {
+    const m = String(dataUrl).match(/^data:image\/(png|jpeg|jpg|gif|webp);base64,(.+)$/);
+    if (!m) throw new Error('不支持的图片格式');
+    const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
+    const r = await fetch('api/asset', {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify({ ext, data: m[2] })
+    });
+    if (r.status === 401) { this.loginUI(); throw new Error('登录已过期'); }
+    if (!r.ok) throw new Error('上传失败 (' + r.status + ')');
+    const j = await r.json();
+    if (!j || !j.url) throw new Error('上传响应异常');
+    return j.url;
+  },
+
+  /* ================= 服务器模式 · 只读访客（分享密码） ================= */
+  async enterGuest(quiet) {
+    const token = localStorage.getItem('wb.share') || '';
+    if (!token) return false;
+    try {
+      const r = await fetch('api/share/data', {
+        headers: { Authorization: 'Bearer ' + token },
+        cache: 'no-store'
+      });
+      if (r.status === 401) { localStorage.removeItem('wb.share'); return false; }
+      const j = await r.json();
+      if (!j) return false;
+      this.guest = true;
+      if (j.db) Store.adoptGuest(j.db, j.serverUpdatedAt || 0);
+      this.startPoll(30000);
+      if (!this._focusBound) {
+        this._focusBound = true;
+        window.addEventListener('focus', () => { if (!document.hidden && this.guest) this.pull(); });
+      }
+      if (!quiet) {
+        const root = document.getElementById('loginRoot');
+        if (root) root.innerHTML = '';
+        /* 关闭登录前基于本地演示数据弹出的晨报等残留弹窗 */
+        if (typeof UI !== 'undefined' && UI.closeModal) UI.closeModal();
+        UI.toast && UI.toast('已进入只读访问模式 👁');
+        if (typeof App !== 'undefined' && App.render) App.render();
+      }
+      return true;
+    } catch (e) { return false; }
+  },
+
   /* ================= 自建服务器登录门禁 ================= */
-  loginUI(msg) {
+  async loginUI(msg) {
     const root = document.getElementById('loginRoot');
     if (!root) return;
+    /* 已开启只读分享 → 登录卡片附带"只读查看"入口 */
+    let shareOn = false;
+    try {
+      const r = await fetch('api/share/config', { cache: 'no-store' });
+      if (r.ok) shareOn = !!((await r.json().catch(() => null)) || {}).enabled;
+    } catch (e) {}
     root.innerHTML = `
       <div class="login-mask">
         <div class="login-card">
@@ -428,6 +506,12 @@ const Sync = {
           <div class="login-sub">${msg || '该站点已开启访问保护，请输入密码进入'}</div>
           <input type="password" id="loginPw" placeholder="访问密码" autocomplete="current-password">
           <button class="btn btn-primary" id="loginBtn" style="width:100%;justify-content:center">进入工作台</button>
+          ${shareOn ? `
+          <div style="display:flex;align-items:center;gap:10px;margin:16px 0;color:var(--muted);font-size:12px">
+            <span style="flex:1;height:1px;background:var(--border)"></span>或<span style="flex:1;height:1px;background:var(--border)"></span>
+          </div>
+          <input type="password" id="gPw" placeholder="分享密码（只读查看）" autocomplete="current-password" style="margin-bottom:10px">
+          <button class="btn btn-ghost" id="gBtn" style="width:100%;justify-content:center">👁 只读查看工作安排</button>` : ''}
           <div class="login-err" id="loginErr"></div>
         </div>
       </div>`;
@@ -452,10 +536,15 @@ const Sync = {
           this.token = j.token;
           localStorage.setItem('wb.token', j.token);
           root.innerHTML = '';
+          /* 关闭登录前残留的演示数据弹窗，并用真实云端数据重新触发晨报判断 */
+          if (typeof UI !== 'undefined' && UI.closeModal) UI.closeModal();
           this.mode = 'server';
           await this.pull();
           this.startPoll(25000);
-          if (typeof App !== 'undefined' && App.state) App.render();
+          if (typeof App !== 'undefined' && App.state) {
+            App.render();
+            if (typeof App.maybeBriefing === 'function') App.maybeBriefing();
+          }
           return;
         }
         err.textContent = j.error || '密码不正确';
@@ -466,5 +555,96 @@ const Sync = {
     };
     btn.addEventListener('click', submit);
     input.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+
+    if (!shareOn) return;
+    const gi = document.getElementById('gPw');
+    const gb = document.getElementById('gBtn');
+    const gsubmit = async () => {
+      const pw = gi.value;
+      if (!pw) return;
+      gb.disabled = true;
+      err.textContent = '';
+      try {
+        const r = await fetch('api/share/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: pw })
+        });
+        const j = await r.json().catch(() => ({}));
+        if (r.status === 200 && j.token) {
+          localStorage.setItem('wb.share', j.token);
+          if (await this.enterGuest()) return;
+          err.textContent = '分享数据暂不可用，请稍后再试';
+        } else {
+          err.textContent = j.error || '密码不正确';
+        }
+      } catch (e) {
+        err.textContent = '网络错误，请重试';
+      }
+      gb.disabled = false;
+    };
+    gb.addEventListener('click', gsubmit);
+    gi.addEventListener('keydown', e => { if (e.key === 'Enter') gsubmit(); });
+  },
+
+  /* ================= 服务器模式 · 只读分享设置（站长） ================= */
+  async serverShareModal() {
+    let on = false;
+    try {
+      const r = await fetch('api/share/config', { cache: 'no-store' });
+      const j = r.ok ? await r.json().catch(() => null) : null;
+      on = !!(j && j.enabled);
+    } catch (e) {}
+    UI.modal({
+      title: '🔗 只读分享',
+      body: `
+        <div style="font-size:12.5px;color:var(--muted);line-height:1.8;margin-bottom:14px">
+          当前状态：<b style="color:${on ? 'var(--green)' : 'var(--muted)'}">${on ? '已开启' : '未开启'}</b><br>
+          开启后，把 <b>网址 + 分享密码</b> 发给老师即可：对方打开网页点「👁 只读查看工作安排」输入密码，就能<strong>只读查看</strong>你的任务、日程、文献与报告——不能修改任何内容，数据<strong>实时刷新</strong>（无需等待部署）。文档里的图片为<strong>原图</strong>，可点击放大下载。<br>
+          ⚠ 对方将能看到你的全部数据内容，请自行斟酌分享范围；未配置 HTTPS 前密码为明文传输，建议尽快配好域名。
+        </div>
+        <div class="form-row"><label>${on ? '新的分享密码（至少 4 位）' : '分享密码（至少 4 位）'}</label>
+          <input id="srvShPw" type="password" placeholder="发给老师的密码，例如 su-teach-2026"></div>`,
+      foot: `${on ? `<button class="btn btn-danger left" data-act="srv-share-clear">停止分享</button>` : ''}
+             <button class="btn btn-ghost" data-act="close-modal">取消</button>
+             <button class="btn btn-primary" data-act="srv-share-save">${on ? '更新密码' : '开启分享'}</button>`
+    });
+  },
+
+  async serverShareSave() {
+    const el = document.getElementById('srvShPw');
+    const pw = ((el && el.value) || '').trim();
+    if (pw.length < 4) { UI.toast('分享密码至少 4 位', 'warn'); return; }
+    const btn = document.querySelector('[data-act="srv-share-save"]');
+    if (btn) { btn.disabled = true; btn.textContent = '保存中…'; }
+    try {
+      const r = await fetch('api/share/set', {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({ enabled: true, password: pw })
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || '保存失败');
+      UI.closeModal();
+      UI.toast('🔗 只读分享已开启：把网址和分享密码发给老师即可，数据实时可见');
+    } catch (e) {
+      UI.toast('保存失败：' + e.message, 'err');
+      if (btn) { btn.disabled = false; btn.textContent = '开启分享'; }
+    }
+  },
+
+  serverShareClear() {
+    UI.confirm('停止分享后，老师将无法再通过密码访问（立即生效）。确定停止？', { danger: true, okText: '停止分享' }).then(async ok => {
+      if (!ok) return;
+      try {
+        const r = await fetch('api/share/set', {
+          method: 'POST',
+          headers: this.headers(),
+          body: JSON.stringify({ enabled: false })
+        });
+        if (!r.ok) throw new Error('操作失败');
+        UI.closeModal();
+        UI.toast('已停止分享');
+      } catch (e) { UI.toast('停止失败：' + e.message, 'err'); }
+    });
   }
 };

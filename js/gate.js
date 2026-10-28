@@ -48,11 +48,21 @@ const Gate = {
   },
 
   /* ================= 入口流程 ================= */
-  init() {
+    init() {
     return new Promise(async resolve => {
       if (!/^https?:$/.test(location.protocol)) return resolve();
       /* 站长设备（已配置同步）→ 免入口 */
       if (localStorage.getItem('wb.gh') || localStorage.getItem('wb.token')) return resolve();
+
+      /* 服务器模式的只读访客：本机记住分享令牌 → 直接装载，避免先闪现本地演示数据 */
+      if (localStorage.getItem('wb.share')) {
+        try {
+          const rc = await fetch('api/share/config', { cache: 'no-store' });
+          const jc = rc.ok ? await rc.json().catch(() => null) : null;
+          if (jc && jc.enabled && typeof Sync !== 'undefined' && await Sync.enterGuest(true)) return resolve();
+          localStorage.removeItem('wb.share');
+        } catch (e) { /* 非 server 部署（无 api），继续走静态门禁流程 */ }
+      }
 
       let cfg = null;
       try {

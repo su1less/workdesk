@@ -11,4 +11,5 @@ services:
       - "8765:8765"
     volumes:
       - ./data:/app/data
+      - ./assets:/app/assets
     restart: unless-stopped

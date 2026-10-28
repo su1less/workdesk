@@ -66,7 +66,7 @@ const App = {
     };
     document.getElementById('viewTitle').textContent = subs[s.view][0];
     document.getElementById('viewSub').textContent = Store.readOnly
-      ? '👁 访客只读模式 · 数据每分钟自动刷新'
+      ? '👁 访客只读模式 · 数据自动刷新'
       : subs[s.view][1];
   },
 
@@ -575,10 +575,13 @@ const App = {
       case 'gate-save': Gate.save(); break;
       case 'gate-clear': Gate.clear(); break;
 
-      /* --- 只读分享 --- */
-      case 'share-set': Gate.shareModal(); break;
+      /* --- 只读分享（GitHub 模式 / 服务器模式各有实现） --- */
+      case 'share-set': Sync.mode === 'server' ? Sync.serverShareModal() : Gate.shareModal(); break;
       case 'share-save': Gate.shareSave(); break;
       case 'share-clear': Gate.shareClear(); break;
+      case 'srv-share-save': Sync.serverShareSave(); break;
+      case 'srv-share-clear': Sync.serverShareClear(); break;
+      case 'guest-exit': localStorage.removeItem('wb.share'); location.reload(); break;
       case 'set-export': this.download('工作台备份_' + U.todayStr() + '.json', Store.exportJSON()); UI.toast('备份文件已下载'); break;
       case 'set-import': document.getElementById('setFile').click(); break;
       case 'set-demo': {
@@ -845,20 +848,20 @@ const App = {
 
   async docInsertImage(file) {
     try {
-      if (Sync.mode === 'github') {
-        /* GitHub 模式：原图直传 assets/（保留论文级分辨率，不压缩），失败再降级压缩内嵌 */
+      if (Sync.mode === 'github' || Sync.mode === 'server') {
+        /* GitHub / 服务器模式：原图直传 assets/（保留论文级分辨率，不压缩），失败再降级压缩内嵌 */
         try {
-          UI.toast('正在上传原图到仓库…');
+          UI.toast('正在上传原图…');
           const dataUrl = await this.readFileAsDataURL(file);
           if (dataUrl.length > 8 * 1024 * 1024) {
             UI.toast('图片较大（约 ' + Math.round(dataUrl.length / 1024 / 1024) + 'MB），上传可能较慢', 'warn');
           }
-          const ref = await Sync.ghPutAsset(dataUrl);
+          const ref = await (Sync.mode === 'github' ? Sync.ghPutAsset(dataUrl) : Sync.putAsset(dataUrl));
           UI.toast('原图已上传：' + ref);
           this.docInsert('\n![图片](', ')\n', ref);
           return;
         } catch (e) {
-          UI.toast('上传仓库失败，改为压缩内嵌（' + e.message + '）', 'warn');
+          UI.toast('上传失败，改为压缩内嵌（' + e.message + '）', 'warn');
         }
       }
       const dataUrl = await this.compressImage(file);
@@ -1048,10 +1051,13 @@ const App = {
       UI.modal({
         title: '⚙️ 设置（访客只读模式）',
         body: `
-          <div class="warn-box" style="margin-bottom:14px">👁 当前为访客只读模式：可自由浏览所有视图、时间轴与报告，数据每分钟自动刷新，不能修改。</div>
-          <div class="form-row"><label>我是站长</label>
+          <div class="warn-box" style="margin-bottom:14px">👁 当前为访客只读模式：可自由浏览所有视图、时间轴与报告，数据自动刷新，不能修改。</div>
+          ${Sync.guest ? `<div class="form-row"><label>访客身份</label>
+            <div style="font-size:12.5px;color:var(--muted);margin-bottom:9px">本机已用分享密码登录只读模式。</div>
+            <button class="btn btn-ghost btn-sm" data-act="guest-exit">🚪 退出只读访问（重新输入密码）</button></div>` : ''}
+          ${Sync.guest ? '' : `<div class="form-row"><label>我是站长</label>
             <div style="font-size:12.5px;color:var(--muted);margin-bottom:9px">在此设备配置 GitHub 同步后可获得完整读写权限。</div>
-            <button class="btn btn-ghost btn-sm" data-act="gh-config">☁ 配置 GitHub 同步</button></div>`
+            <button class="btn btn-ghost btn-sm" data-act="gh-config">☁ 配置 GitHub 同步</button></div>`}`
       });
       return;
     }
@@ -1072,7 +1078,10 @@ const App = {
           <div style="font-size:12.5px;color:var(--muted);margin-bottom:9px;line-height:1.7">
             数据实时保存到服务器，多设备登录后看到同一份数据；清浏览器缓存不影响数据。备份可直接复制 <code>data/db.json</code>。
           </div>
-          <button class="btn btn-ghost btn-sm" data-act="sync-logout">🚪 退出登录（此设备）</button></div>`
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-ghost btn-sm" data-act="share-set">🔗 只读分享</button>
+            <button class="btn btn-ghost btn-sm" data-act="sync-logout">🚪 退出登录（此设备）</button>
+          </div></div>`
         : Sync.mode === 'github' ? `<div class="form-row"><label>☁ 云端同步 · GitHub（已启用）</label>
           <div style="font-size:12.5px;color:var(--muted);margin-bottom:9px;line-height:1.7">
             仓库 <b>${UI.esc(Sync.gh.repo)}</b> · 分支 ${UI.esc(Sync.gh.branch)}${Sync.gh.pass ? ' · 🔒 已加密' : ' · <span style="color:var(--amber)">未加密</span>'}。
