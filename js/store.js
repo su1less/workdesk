@@ -64,25 +64,37 @@ const Store = {
       this.db = raw ? JSON.parse(raw) : null;
     } catch (e) { this.db = null; }
     if (!this.db || !Array.isArray(this.db.tasks)) this.db = this._seed();
+    this._normalize();
+    this.save();
+    return this.db;
+  },
+
+  /* 字段归一化：补齐缺失的默认字段（种子/旧备份/访客数据兼容） */
+  _normalize() {
     if (!this.db.settings) this.db.settings = { workingStart: '07:00', workingEnd: '23:00', theme: 'light' };
     if (!this.db.meta) this.db.meta = { lastBriefDate: '' };
-    /* 字段归一化：补齐缺失的默认字段（种子/旧备份兼容） */
-    this.db.tasks = this.db.tasks.map(t => Object.assign({
+    this.db.tasks = (this.db.tasks || []).map(t => Object.assign({
       id: this.uid(), kind: 'task', level: 'day', status: 'todo', progress: 0,
-      priority: 'mid', due: '', start: '', end: '', fixed: false, sudden: false,
+      priority: 'mid', date: U.todayStr(), due: '', start: '', end: '', fixed: false, sudden: false,
       tags: [], source: '', adjusted: '', note: '',
       createdAt: Date.now(), updatedAt: Date.now(), doneAt: null
     }, t));
-    /* 文献库（旧数据无 refs 字段时不注入演示文献，保持空库） */
-    if (!Array.isArray(this.db.refs)) this.db.refs = [];
-    this.db.refs = this.db.refs.map(r => Object.assign({
+    this.db.refs = (this.db.refs || []).map(r => Object.assign({
       id: this.uid(), title: '', authors: '', year: null, type: 'paper', venue: '',
       doi: '', url: '', tags: [], status: 'want', rating: 0, readProgress: 0,
       abstract: '', note: '', readAt: null, source: '',
       createdAt: Date.now(), updatedAt: Date.now()
     }, r));
-    this.save();
-    return this.db;
+  },
+
+  /* 访客只读模式：加载分享数据，不落本地存储，锁定修改 */
+  adoptGuest(db, serverUpdatedAt) {
+    this.db = (db && typeof db === 'object') ? db : { tasks: [], refs: [] };
+    this._normalize();
+    this.db.meta.serverUpdatedAt = serverUpdatedAt || 0;
+    this.readOnly = true;
+    document.body.classList.add('readonly');
+    if (typeof App !== 'undefined' && App.state) App.render();
   },
 
   save() {

@@ -105,6 +105,7 @@ const Sync = {
       } else if (this.mode === 'github') {
         const su = await this.ghPut(Store.db);
         this._stampLocal(su);
+        await this._pushShare(su);
       }
     } catch (e) {
       if (this.mode === 'github' && /令牌|TOKEN/.test(e.message)) this.ghModal(e.message);
@@ -143,6 +144,11 @@ const Sync = {
       try { this._ghKey = await this.deriveKey(this.gh.pass, this.gh.salt); }
       catch (e) { this.ghModal('无法初始化加密：' + e.message); return; }
     }
+    /* 读取站点配置（含只读分享开关） */
+    try {
+      const r = await fetch('site-config.json?t=' + Date.now(), { cache: 'no-store' });
+      this.siteCfg = r.ok ? await r.json().catch(() => null) : null;
+    } catch (e) { this.siteCfg = null; }
     await this.pull();
     this.startPoll(60000);
     window.addEventListener('focus', () => { if (!document.hidden && this.mode === 'github') this.pull(); });
@@ -224,6 +230,21 @@ const Sync = {
     if (this._ghKey) txt = 'WBENC1:' + await this.encryptText(this._ghKey, txt);
     await this.ghPutFile(this.gh.path, txt, '工作台数据同步 ' + new Date(su).toLocaleString('zh-CN'));
     return su;
+  },
+
+  /* 只读分享开启时，随主数据同步更新分享文件 */
+  async _pushShare(su) {
+    try {
+      const shareOn = this.siteCfg && this.siteCfg.share && this.siteCfg.share.salt && this.gh.sharePass;
+      if (!shareOn) return;
+      if (!this._shareKeyC) {
+        const k = await Gate.deriveShareKeys(this.gh.sharePass, this.siteCfg.share.salt);
+        this._shareKeyC = k.key;
+      }
+      let txt = JSON.stringify({ db: Store.db, serverUpdatedAt: su });
+      txt = 'WBENC1:' + await this.encryptText(this._shareKeyC, txt);
+      await this.ghPutFile(SHARE_PATH, txt, '只读分享数据同步');
+    } catch (e) { /* 分享更新失败不影响主数据 */ }
   },
 
   /* ---------- 加密（AES-GCM + PBKDF2，WebCrypto） ---------- */

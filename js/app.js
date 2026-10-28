@@ -61,7 +61,9 @@ const App = {
       import: ['导入计划', '解析 Markdown 计划文档，一键生成任务与进度安排']
     };
     document.getElementById('viewTitle').textContent = subs[s.view][0];
-    document.getElementById('viewSub').textContent = subs[s.view][1];
+    document.getElementById('viewSub').textContent = Store.readOnly
+      ? '👁 访客只读模式 · 数据每分钟自动刷新'
+      : subs[s.view][1];
   },
 
   go(v) { this.state.view = v; this.render(); },
@@ -216,6 +218,12 @@ const App = {
 
   /* ---------- 动作分发 ---------- */
   handle(act, el, e) {
+    /* 访客只读模式：拦截所有修改类操作 */
+    if (Store.readOnly && App.RO_BLOCK.has(act)) {
+      e && e.preventDefault && e.preventDefault();
+      UI.toast('🔗 访客只读模式：仅可查看，不能修改', 'warn');
+      return;
+    }
     const s = this.state;
     switch (act) {
       /* --- 通用 --- */
@@ -472,6 +480,11 @@ const App = {
       case 'gate-set': Gate.modal(); break;
       case 'gate-save': Gate.save(); break;
       case 'gate-clear': Gate.clear(); break;
+
+      /* --- 只读分享 --- */
+      case 'share-set': Gate.shareModal(); break;
+      case 'share-save': Gate.shareSave(); break;
+      case 'share-clear': Gate.shareClear(); break;
       case 'set-export': this.download('工作台备份_' + U.todayStr() + '.json', Store.exportJSON()); UI.toast('备份文件已下载'); break;
       case 'set-import': document.getElementById('setFile').click(); break;
       case 'set-demo': {
@@ -489,8 +502,19 @@ const App = {
     }
   },
 
+  /* 访客只读模式下被拦截的修改类动作 */
+  RO_BLOCK: new Set([
+    'toggle-task', 'carry-over', 't-save', 't-delete', 'brief-carry',
+    'sud-submit', 'adj-apply', 'adj-only', 'imp-do',
+    'ref-save', 'ref-delete', 'ref-cycle', 'ref-task', 'bib-do',
+    'gate-save', 'gate-clear', 'share-save', 'share-clear',
+    'gh-save', 'gh-disconnect', 'sync-logout',
+    'set-import', 'set-demo', 'set-clear', 'add-task-on', 'add-task-new', 'add-week-task', 'add-month-task'
+  ]),
+
   /* ---------- 快速添加 ---------- */
   quickAdd(input) {
+    if (Store.readOnly) { UI.toast('🔗 访客只读模式：仅可查看', 'warn'); input.value = ''; return; }
     const v = input.value.trim();
     if (!v) return;
     const p = MD.inline(v, { date: U.todayStr() });
@@ -715,6 +739,7 @@ const App = {
 
   /* ---------- 晨报（秘书提醒） ---------- */
   maybeBriefing() {
+    if (Store.readOnly) return;   /* 访客只读模式不弹晨报 */
     if (Store.db.meta.lastBriefDate !== U.todayStr()) {
       Store.db.meta.lastBriefDate = U.todayStr();
       Store.save();
@@ -795,6 +820,18 @@ const App = {
   /* ---------- 设置 ---------- */
   settingsModal() {
     const st = Store.db.settings;
+    /* 访客只读模式：极简设置 */
+    if (Store.readOnly) {
+      UI.modal({
+        title: '⚙️ 设置（访客只读模式）',
+        body: `
+          <div class="warn-box" style="margin-bottom:14px">👁 当前为访客只读模式：可自由浏览所有视图、时间轴与报告，数据每分钟自动刷新，不能修改。</div>
+          <div class="form-row"><label>我是站长</label>
+            <div style="font-size:12.5px;color:var(--muted);margin-bottom:9px">在此设备配置 GitHub 同步后可获得完整读写权限。</div>
+            <button class="btn btn-ghost btn-sm" data-act="gh-config">☁ 配置 GitHub 同步</button></div>`
+      });
+      return;
+    }
     const n = Store.tasks().length;
     const size = Math.round(JSON.stringify(Store.db).length / 1024);
     UI.modal({
@@ -821,7 +858,8 @@ const App = {
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-ghost btn-sm" data-act="gh-pull-now">🔄 立即同步</button>
             <button class="btn btn-ghost btn-sm" data-act="gh-config">⚙ 修改配置</button>
-            <button class="btn btn-ghost btn-sm" data-act="gate-set">🔒 网页门禁密码</button>
+            <button class="btn btn-ghost btn-sm" data-act="share-set">🔗 只读分享</button>
+            <button class="btn btn-ghost btn-sm" data-act="gate-set">🔒 网页门禁</button>
           </div></div>`
         : `<div class="form-row"><label>☁ 云端同步（未启用）</label>
           <div style="font-size:12.5px;color:var(--muted);margin-bottom:9px;line-height:1.7">

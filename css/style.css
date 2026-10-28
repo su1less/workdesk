@@ -614,6 +614,9 @@ html[data-theme="dark"] .adj-new { color: #a5b4fc; }
 .login-card input:focus { border-color: var(--primary); }
 .login-err { color: var(--red); font-size: 12.5px; margin-top: 12px; min-height: 17px; }
 
+/* 访客只读模式：隐藏编辑入口 */
+body.readonly .quickadd, body.readonly .btn-sudden { display: none !important; }
+
 @media (max-width: 1180px) {
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
   .dash-grid { grid-template-columns: 1fr 1fr; }

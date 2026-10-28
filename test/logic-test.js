@@ -223,6 +223,20 @@ t('b64 大文本往返（分块）', Sync.b64decode(Sync.b64encode(big)) === big
   const h4 = await Gate.deriveHash('门禁口令测试', Sync.b64rnd(16));
   t('门禁哈希确定性', h1 === h2 && /^[0-9a-f]{64}$/.test(h1));
   t('门禁哈希敏感性（口令/盐不同则不同）', h1 !== h3 && h1 !== h4);
+  /* 只读分享密钥派生 */
+  const shSalt = Sync.b64rnd(16);
+  const k1 = await Gate.deriveShareKeys('teacher-pass', shSalt);
+  const k2 = await Gate.deriveShareKeys('teacher-pass', shSalt);
+  const k3 = await Gate.deriveShareKeys('other-pass', shSalt);
+  t('分享密钥哈希确定性(64hex)', k1.hash === k2.hash && /^[0-9a-f]{64}$/.test(k1.hash));
+  t('分享哈希口令敏感', k1.hash !== k3.hash);
+  const kHex1 = await Gate.keyHex(k1.key), kHex2 = await Gate.keyHex(k2.key);
+  t('分享密钥确定性', kHex1 === kHex2);
+  /* 分享密钥可加解密数据（访客读取路径） */
+  const shPlain = JSON.stringify({ db: { tasks: [{ title: '老师可见' }] }, serverUpdatedAt: 123 });
+  const shEnc = await Sync.encryptText(k1.key, shPlain);
+  const shFile = 'WBENC1:' + shEnc;   /* 入库文件格式 */
+  t('分享数据加解密往返', (await Sync.decryptText(k2.key, shFile.slice(7))) === shPlain);
   finish();
 })();
 
