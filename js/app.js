@@ -845,24 +845,37 @@ const App = {
 
   async docInsertImage(file) {
     try {
-      const dataUrl = await this.compressImage(file);
-      let ref = dataUrl;
       if (Sync.mode === 'github') {
-        /* GitHub 模式：图片传到仓库 assets/，文档只存网址（数据文件不受图片体积影响） */
+        /* GitHub 模式：原图直传 assets/（保留论文级分辨率，不压缩），失败再降级压缩内嵌 */
         try {
-          UI.toast('正在上传图片到仓库…');
-          ref = await Sync.ghPutAsset(dataUrl);
-          UI.toast('图片已上传：' + ref);
+          UI.toast('正在上传原图到仓库…');
+          const dataUrl = await this.readFileAsDataURL(file);
+          if (dataUrl.length > 8 * 1024 * 1024) {
+            UI.toast('图片较大（约 ' + Math.round(dataUrl.length / 1024 / 1024) + 'MB），上传可能较慢', 'warn');
+          }
+          const ref = await Sync.ghPutAsset(dataUrl);
+          UI.toast('原图已上传：' + ref);
+          this.docInsert('\n![图片](', ')\n', ref);
+          return;
         } catch (e) {
-          UI.toast('上传仓库失败，已改为内嵌（' + e.message + '）', 'warn');
+          UI.toast('上传仓库失败，改为压缩内嵌（' + e.message + '）', 'warn');
         }
-      } else if (dataUrl.length > 400 * 1024) {
-        UI.toast('图片较大（' + Math.round(dataUrl.length / 1024) + 'KB），已内嵌；注意数据体积', 'warn');
       }
-      this.docInsert('\n![图片](', ')\n', ref);
+      const dataUrl = await this.compressImage(file);
+      if (dataUrl.length > 400 * 1024) UI.toast('图片较大（' + Math.round(dataUrl.length / 1024) + 'KB），已内嵌；注意数据体积', 'warn');
+      this.docInsert('\n![图片](', ')\n', dataUrl);
     } catch (e) {
       UI.toast('图片读取失败', 'err');
     }
+  },
+
+  readFileAsDataURL(file) {
+    return new Promise((resolve, reject) => {
+      const rd = new FileReader();
+      rd.onload = () => resolve(rd.result);
+      rd.onerror = reject;
+      rd.readAsDataURL(file);
+    });
   },
 
   /* ---------- 突发日程 ---------- */

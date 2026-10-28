@@ -435,7 +435,8 @@ const MD = {
   render(src) {
     const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const inline = s => esc(s)
-      .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, '<img src="$2" alt="$1" loading="lazy">')
+      .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g,
+        (m, alt, u) => `<a href="${u}" target="_blank" rel="noopener" title="点击在新标签页查看原图"><img src="${u}" alt="${alt}" loading="lazy"></a>`)
       .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
       .replace(/`([^`]+)`/g, '<code>$1</code>')
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
