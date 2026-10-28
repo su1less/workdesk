@@ -22,6 +22,8 @@ const Sync = {
   _pollTimer: null,
   _pushing: false,
   _dirty: false,           // 有未上传到云端的本地修改（拉取不得覆盖）
+  _dirtySeq: 0,            // 修改代际：推送期间又有新修改时，禁止清除脏标记
+  _lastFailAt: 0,          // 上次失败提示时间（重试限频用）
 
   headers() {
     const h = { 'Content-Type': 'application/json' };
@@ -88,12 +90,19 @@ const Sync = {
   schedulePush() {
     if (this.mode === 'local') return;
     this._dirty = true;
+    this._dirtySeq++;
     clearTimeout(this._pushTimer);
     this._pushTimer = setTimeout(() => this.push(), this.mode === 'github' ? 3000 : 700);
   },
 
   async push() {
-    if (this.mode === 'local' || this._pushing) return;
+    if (this.mode === 'local') return;
+    if (this._pushing) {
+      /* 已有推送在途：若仍有待推修改，稍后再试，确保不会静默丢失 */
+      if (this._dirty) this._pushTimer = setTimeout(() => this.push(), 1500);
+      return;
+    }
+    const seq = this._dirtySeq;   // 本次推送所覆盖的修改代际
     this._pushing = true;
     let ok = false;
     try {
@@ -114,14 +123,21 @@ const Sync = {
         ok = true;
       }
       if (ok) {
-        this._dirty = false;
-        clearTimeout(this._retryTimer);
+        /* 仅当推送期间没有产生新修改（代际未变）才清除脏标记、恢复拉取 */
+        if (this._dirtySeq === seq) {
+          this._dirty = false;
+          clearTimeout(this._retryTimer);
+        }
       }
     } catch (e) {
       if (this.mode === 'github' && /令牌|TOKEN/.test(e.message)) this.ghModal(e.message);
       else {
         /* 保持 _dirty：阻止轮询用旧数据覆盖，并自动重试推送 */
-        UI.toast && UI.toast('☁ 同步失败，稍后自动重试', 'warn');
+        const now = Date.now();
+        if (now - this._lastFailAt > 120000) {
+          UI.toast && UI.toast('☁ 同步失败，稍后自动重试', 'warn');
+          this._lastFailAt = now;
+        }
         clearTimeout(this._retryTimer);
         this._retryTimer = setTimeout(() => this.push(), 15000);
       }

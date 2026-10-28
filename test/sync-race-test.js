@@ -31,6 +31,7 @@ const resp = (status, obj) => ({ status, ok: status < 400, json: async () => obj
     wrapper: { db: { tasks: [{ id: 'a1', title: '旧任务', date: '2026-01-01', level: 'day', status: 'todo' }], refs: [], meta: {}, settings: {} }, serverUpdatedAt: 100 }
   };
   let puts = 0;
+  let putDelay = 0;
   global.fetch = async (url, opts) => {
     url = String(url);
     const isPut = opts && opts.method === 'PUT';
@@ -38,6 +39,7 @@ const resp = (status, obj) => ({ status, ok: status < 400, json: async () => obj
       return resp(200, { sha: server.sha, encoding: 'base64', content: b64e(JSON.stringify(server.wrapper)) });
     }
     if (url.includes('/contents/data/db.json') && isPut) {
+      if (putDelay) await sleep(putDelay);
       puts++;
       server.sha = 'sha-' + (puts + 1);
       server.wrapper = JSON.parse(b64d(JSON.parse(opts.body).content));
@@ -92,6 +94,22 @@ const resp = (status, obj) => ({ status, ok: status < 400, json: async () => obj
   await sleep(16000);  /* 等 15 秒自动重试 */
   t('自动重试后服务器收到修改', server.wrapper.db.tasks.length === 1 && server.wrapper.db.tasks[0].title === '网络故障期的修改');
   t('重试成功后脏标记清除', Sync._dirty === false);
+
+  /* ---- 场景 3：推送在途期间又发生新修改（代际保护） ---- */
+  putDelay = 1200;   /* 模拟慢网络：PUT 需要 1.2 秒 */
+  Store.addTask({ title: '推送期间第一次修改' });
+  Sync._pushTimer = null;
+  Sync.push();                              /* 立即推送（跳过防抖，制造在途窗口） */
+  await sleep(400);                          /* 推送在途 */
+  Store.addTask({ title: '推送在途中的新修改' });   /* save → dirty=true, 代际+1 */
+  await sleep(1400);                         /* 第一次推送完成 */
+  t('推送完成后脏标记保留（期间有新修改）', Sync._dirty === true);
+  await Sync.pull();
+  t('在途修改未被拉取覆盖', Store.db.tasks.some(x => x.title === '推送在途中的新修改'));
+  await sleep(3400);                         /* 新修改的防抖推送 */
+  t('在途修改最终推送到服务器', server.wrapper.db.tasks.some(x => x.title === '推送在途中的新修改'));
+  t('最终脏标记清除', Sync._dirty === false);
+  putDelay = 0;
 
   console.log(`\n结果：${pass} 通过, ${fail} 失败`);
   process.exit(fail ? 1 : 0);
