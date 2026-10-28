@@ -845,10 +845,21 @@ const App = {
 
   async docInsertImage(file) {
     try {
-      UI.toast('正在处理图片…');
       const dataUrl = await this.compressImage(file);
-      if (dataUrl.length > 400 * 1024) UI.toast('图片较大（' + Math.round(dataUrl.length / 1024) + 'KB），已内嵌；注意文档总量', 'warn');
-      this.docInsert('\n![图片](', ')' + '\n', dataUrl);
+      let ref = dataUrl;
+      if (Sync.mode === 'github') {
+        /* GitHub 模式：图片传到仓库 assets/，文档只存网址（数据文件不受图片体积影响） */
+        try {
+          UI.toast('正在上传图片到仓库…');
+          ref = await Sync.ghPutAsset(dataUrl);
+          UI.toast('图片已上传：' + ref);
+        } catch (e) {
+          UI.toast('上传仓库失败，已改为内嵌（' + e.message + '）', 'warn');
+        }
+      } else if (dataUrl.length > 400 * 1024) {
+        UI.toast('图片较大（' + Math.round(dataUrl.length / 1024) + 'KB），已内嵌；注意数据体积', 'warn');
+      }
+      this.docInsert('\n![图片](', ')\n', ref);
     } catch (e) {
       UI.toast('图片读取失败', 'err');
     }

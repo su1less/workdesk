@@ -216,11 +216,13 @@ const Sync = {
     return { db: data.db, serverUpdatedAt: data.serverUpdatedAt || 0 };
   },
 
-  /* 通用文件提交：自动处理 sha（新建/更新/冲突重试一次，后写优先） */
+  /* 通用文件提交：自动处理 sha（新建/更新/冲突重试一次，后写优先）。
+   * content 为字符串/对象（JSON 序列化）；{__RAW_B64__} 表示已是 base64，直接作为文件内容 */
   async ghPutFile(path, content, message, opts) {
     const o = opts || { repo: this.gh.repo, token: this.gh.token, branch: this.gh.branch };
-    const body0 = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
-    const payload = this.b64encode(body0);
+    const body0 = (content && content.__RAW_B64__) ? content.__RAW_B64__
+      : (typeof content === 'string' ? content : JSON.stringify(content, null, 2));
+    const payload = (content && content.__RAW_B64__) ? content.__RAW_B64__ : this.b64encode(body0);
     const base = 'https://api.github.com/repos/' + o.repo + '/contents/' + path;
     const hd = {
       Authorization: 'Bearer ' + o.token,
@@ -257,6 +259,16 @@ const Sync = {
     return res;
   },
 
+  /* 图片上传：dataURL → 仓库 assets/ 目录，返回相对路径（文档中引用，不占数据文件体积） */
+  async ghPutAsset(dataUrl) {
+    const m = String(dataUrl).match(/^data:image\/(png|jpeg|jpg|gif|webp);base64,(.+)$/);
+    if (!m) throw new Error('不支持的图片格式');
+    const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
+    const name = 'img-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5) + '.' + ext;
+    await this.ghPutFile('assets/' + name, { __RAW_B64__: m[2] }, '上传文档图片 ' + name);
+    return 'assets/' + name;
+  },
+
   async ghPut(db) {
     const su = Date.now();
     let txt = JSON.stringify({ db, serverUpdatedAt: su });
@@ -266,8 +278,7 @@ const Sync = {
   },
 
   /* 只读分享开启时，随主数据同步更新分享文件 */
-  async _pushShare(su) {
-    try {
+  async _pushShare(su) {    try {
       const shareOn = this.siteCfg && this.siteCfg.share && this.siteCfg.share.salt && this.gh.sharePass;
       if (!shareOn) return;
       if (!this._shareKeyC) {

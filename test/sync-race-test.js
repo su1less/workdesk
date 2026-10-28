@@ -111,6 +111,24 @@ const resp = (status, obj) => ({ status, ok: status < 400, json: async () => obj
   t('最终脏标记清除', Sync._dirty === false);
   putDelay = 0;
 
+  /* ---- 场景 4：图片上传（assets/ 原始 base64 直传，不占数据文件体积） ---- */
+  let assetPut = null;
+  const prevFetch = global.fetch;
+  global.fetch = async (url, opts) => {
+    url = String(url);
+    if (url.includes('/contents/assets/')) {
+      if (opts && opts.method === 'PUT') { assetPut = JSON.parse(opts.body); return resp(200, { content: { sha: 'asset-1' } }); }
+      return resp(404, {});
+    }
+    return prevFetch(url, opts);
+  };
+  const pngB64 = Buffer.from('fake-png-bytes').toString('base64');
+  const assetPath = await Sync.ghPutAsset('data:image/png;base64,' + pngB64);
+  t('图片上传返回 assets 路径', /^assets\/img-\w+\.(png|jpg|gif|webp)$/.test(assetPath), assetPath);
+  t('图片 base64 原样直传（不再二次编码）', !!assetPut && assetPut.content === pngB64);
+  t('图片上传不影响数据文件', server.wrapper.db.tasks.length === 1);
+  global.fetch = prevFetch;
+
   console.log(`\n结果：${pass} 通过, ${fail} 失败`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error('测试崩溃:', e); process.exit(1); });
