@@ -99,8 +99,8 @@ const Store = {
 
   save() {
     try { localStorage.setItem(DB_KEY, JSON.stringify(this.db)); } catch (e) { console.error('保存失败', e); }
-    /* 云端模式：推送到服务器（采纳远端数据时跳过，避免回环） */
-    if (typeof Sync !== 'undefined' && Sync.mode === 'server' && !this._skipPush) Sync.schedulePush();
+    /* 云端模式（自建服务器 / GitHub）：推送到远端（采纳远端数据时跳过，避免回环） */
+    if (typeof Sync !== 'undefined' && Sync.mode !== 'local' && !this._skipPush) Sync.schedulePush();
     this._skipPush = false;
   },
 

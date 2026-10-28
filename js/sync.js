@@ -18,8 +18,10 @@ const Sync = {
   gh: null,                 // GitHub 同步配置 {repo,branch,path,token,pass,salt}
   _ghKey: null,             // 由口令派生的 AES-GCM 密钥
   _pushTimer: null,
+  _retryTimer: null,
   _pollTimer: null,
   _pushing: false,
+  _dirty: false,           // 有未上传到云端的本地修改（拉取不得覆盖）
 
   headers() {
     const h = { 'Content-Type': 'application/json' };
@@ -56,7 +58,8 @@ const Sync = {
 
   /* ================= 拉取 / 推送 ================= */
   async pull() {
-    if (this._pushing) return;
+    /* 本地有未推送的修改时禁止采纳远端，防止把待上传的变更覆盖掉 */
+    if (this._pushing || this._dirty) return;
     if (this.mode === 'server') {
       try {
         const r = await fetch('api/data', { headers: this.headers(), cache: 'no-store' });
@@ -84,6 +87,7 @@ const Sync = {
 
   schedulePush() {
     if (this.mode === 'local') return;
+    this._dirty = true;
     clearTimeout(this._pushTimer);
     this._pushTimer = setTimeout(() => this.push(), this.mode === 'github' ? 3000 : 700);
   },
@@ -91,6 +95,7 @@ const Sync = {
   async push() {
     if (this.mode === 'local' || this._pushing) return;
     this._pushing = true;
+    let ok = false;
     try {
       if (this.mode === 'server') {
         const r = await fetch('api/data', {
@@ -101,21 +106,32 @@ const Sync = {
         if (r.status === 401) { this.loginUI(); return; }
         if (r.status === 400) { UI.toast && UI.toast('同步失败：数据格式异常', 'err'); return; }
         const j = await r.json();
-        if (j && j.serverUpdatedAt) this._stampLocal(j.serverUpdatedAt);
+        if (j && j.serverUpdatedAt) { this._stampLocal(j.serverUpdatedAt); ok = true; }
       } else if (this.mode === 'github') {
         const su = await this.ghPut(Store.db);
         this._stampLocal(su);
         await this._pushShare(su);
+        ok = true;
+      }
+      if (ok) {
+        this._dirty = false;
+        clearTimeout(this._retryTimer);
       }
     } catch (e) {
       if (this.mode === 'github' && /令牌|TOKEN/.test(e.message)) this.ghModal(e.message);
-      else UI.toast && UI.toast('☁ 同步失败：' + e.message, 'warn');
+      else {
+        /* 保持 _dirty：阻止轮询用旧数据覆盖，并自动重试推送 */
+        UI.toast && UI.toast('☁ 同步失败，稍后自动重试', 'warn');
+        clearTimeout(this._retryTimer);
+        this._retryTimer = setTimeout(() => this.push(), 15000);
+      }
     } finally {
       this._pushing = false;
     }
   },
 
   _stampLocal(su) {
+    if (su == null) return;
     if (!Store.db.meta) Store.db.meta = {};
     Store.db.meta.serverUpdatedAt = su;
     try { localStorage.setItem('workbench.db.v1', JSON.stringify(Store.db)); } catch (e) {}
@@ -221,6 +237,7 @@ const Sync = {
       const r2 = await fetch(base + '?ref=' + encodeURIComponent(o.branch), { headers: hd });
       res = await attempt(r2.ok ? (await r2.json()).sha : null);
     }
+    if (res === null) throw new Error('GitHub 提交冲突，自动重试失败');
     return res;
   },
 

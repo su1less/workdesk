@@ -494,8 +494,15 @@ const App = {
         break;
       }
       case 'set-clear': {
-        UI.confirm('清空后将<b>删除所有任务与日程</b>（建议先导出备份），确定继续吗？', { danger: true, okText: '全部清空' }).then(ok => {
-          if (ok) { Store.db.tasks = []; Store.db.meta = { lastBriefDate: U.todayStr() }; Store.save(); UI.closeModal(); this.render(); UI.toast('已清空所有数据'); }
+        UI.confirm('清空后将<b>删除所有任务、日程与文献</b>（建议先导出备份），确定继续吗？', { danger: true, okText: '全部清空' }).then(ok => {
+          if (ok) {
+            Store.db.tasks = [];
+            Store.db.refs = [];
+            /* 只重置晨报标记，保留 serverUpdatedAt 等同步元信息 */
+            Store.db.meta.lastBriefDate = U.todayStr();
+            Store.save();
+            UI.closeModal(); this.render(); UI.toast('已清空所有数据');
+          }
         });
         break;
       }
