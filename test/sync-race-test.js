@@ -124,10 +124,11 @@ const resp = (status, obj) => ({ status, ok: status < 400, json: async () => obj
   };
   const pngB64 = Buffer.from('fake-png-bytes').toString('base64');
   const tasksBefore = server.wrapper.db.tasks.length;
+  const putsBefore = puts;
   const assetPath = await Sync.ghPutAsset('data:image/png;base64,' + pngB64);
   t('图片上传返回 assets 路径', /^assets\/img-\w+\.(png|jpg|gif|webp)$/.test(assetPath), assetPath);
   t('图片 base64 原样直传（不再二次编码）', !!assetPut && assetPut.content === pngB64);
-  t('图片上传不影响数据文件', server.wrapper.db.tasks.length === tasksBefore && puts === 2);
+  t('图片上传不影响数据文件', server.wrapper.db.tasks.length === tasksBefore && puts === putsBefore);
   global.fetch = prevFetch;
 
   console.log(`\n结果：${pass} 通过, ${fail} 失败`);
