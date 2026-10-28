@@ -455,7 +455,7 @@ const UI = {
       <span style="font-size:12px;color:var(--muted);margin-left:auto">共 ${list.length} 项</span>
       <button class="btn btn-primary btn-sm" data-act="add-task-new">＋ 新建任务</button>
     </div>
-    <div class="card" style="padding:8px 16px 16px">
+    <div class="card scroll-x" style="padding:8px 16px 16px">
       ${list.length ? `<table class="lib-table"><thead><tr>
         <th>任务</th><th>类型</th><th>日期</th><th>时间</th><th>优先级</th><th>状态</th><th style="width:150px">进度</th>
       </tr></thead><tbody>

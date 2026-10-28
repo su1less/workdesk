@@ -43,7 +43,7 @@ const App = {
   /* ---------- 渲染 ---------- */
   render() {
     const s = this.state;
-    document.querySelectorAll('#nav .nav-item[data-nav]').forEach(b =>
+    document.querySelectorAll('.nav-item[data-nav], .tab-item[data-nav]').forEach(b =>
       b.classList.toggle('active', b.dataset.nav === s.view));
     const map = {
       dashboard: UI.dashboard, today: UI.today, week: UI.week, month: UI.month,
@@ -70,7 +70,7 @@ const App = {
 
   /* ---------- 事件绑定 ---------- */
   bindEvents() {
-    document.querySelectorAll('#nav .nav-item[data-nav]').forEach(b =>
+    document.querySelectorAll('[data-nav]').forEach(b =>
       b.addEventListener('click', () => this.go(b.dataset.nav)));
 
     /* 点击委托 */
@@ -227,7 +227,21 @@ const App = {
     const s = this.state;
     switch (act) {
       /* --- 通用 --- */
-      case 'go': this.go(el.dataset.v); break;
+      case 'go': if (document.querySelector('#modalRoot .modal-mask')) UI.closeModal(); this.go(el.dataset.v); break;
+      case 'open-more': {
+        UI.modal({
+          title: '更多',
+          body: `<div class="more-list">
+            <button data-act="go" data-v="library"><span class="mi-icon">🗂️</span>任务库</button>
+            <button data-act="go" data-v="refs"><span class="mi-icon">📚</span>文献管理</button>
+            <button data-act="go" data-v="reports"><span class="mi-icon">📄</span>进度报告</button>
+            <button data-act="go" data-v="import"><span class="mi-icon">📥</span>导入计划</button>
+            <button data-act="open-settings"><span class="mi-icon">⚙️</span>设置</button>
+            <button data-act="toggle-theme"><span class="mi-icon">🌙</span>深色 / 浅色切换</button>
+          </div>`
+        });
+        break;
+      }
       case 'close-modal': UI.closeModal(); break;
       case 'modal-mask':
         if (UI._cfResolve) { UI._cfResolve(false); UI._cfResolve = null; }
@@ -236,7 +250,9 @@ const App = {
       case 'cf-no': if (UI._cfResolve) { UI._cfResolve(false); UI._cfResolve = null; } UI.closeModal(); break;
       case 'toggle-theme': {
         Store.db.settings.theme = Store.db.settings.theme === 'dark' ? 'light' : 'dark';
-        Store.save(); this.applyTheme(); break;
+        Store.save(); this.applyTheme();
+        UI.closeModal();
+        break;
       }
 
       /* --- 任务 --- */

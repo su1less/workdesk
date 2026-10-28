@@ -363,7 +363,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 .week-focus { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; margin-bottom: 16px; }
 
 /* ============ 本月视图 ============ */
-.month-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
+.month-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
 .m-week-head { text-align: center; font-size: 12px; color: var(--muted); font-weight: 600; padding: 4px 0; }
 .m-cell {
   background: var(--card); border: 1px solid var(--line2); border-radius: 10px;
@@ -617,14 +617,111 @@ html[data-theme="dark"] .adj-new { color: #a5b4fc; }
 /* 访客只读模式：隐藏编辑入口 */
 body.readonly .quickadd, body.readonly .btn-sudden { display: none !important; }
 
+/* ============ 移动端：底部标签栏 & 悬浮按钮 ============ */
+#tabbar { display: none; }
+.fab {
+  display: none;
+  position: fixed; right: 16px; bottom: calc(80px + env(safe-area-inset-bottom)); z-index: 55;
+  width: 52px; height: 52px; border-radius: 50%; border: none;
+  background: var(--grad); color: #fff; font-size: 26px; line-height: 1;
+  align-items: center; justify-content: center; cursor: pointer;
+  box-shadow: 0 8px 20px -6px rgba(99,102,241,.7);
+}
+.fab:active { transform: scale(.92); }
+body.readonly .fab { display: none !important; }
+.more-list { display: flex; flex-direction: column; gap: 4px; }
+.more-list button {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  border: none; background: transparent; color: var(--text);
+  font-family: inherit; font-size: 14.5px; font-weight: 500;
+  padding: 12px 10px; border-radius: 12px; cursor: pointer; text-align: left;
+}
+.more-list button:active { background: var(--card2); }
+.more-list .mi-icon { width: 36px; height: 36px; border-radius: 10px; background: var(--primary-soft); display: flex; align-items: center; justify-content: center; font-size: 17px; flex-shrink: 0; }
+
+/* ============ 响应式 ============ */
 @media (max-width: 1180px) {
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
   .dash-grid { grid-template-columns: 1fr 1fr; }
   .today-layout, .report-layout, .import-layout { grid-template-columns: 1fr; }
   .quickadd { width: 220px; }
 }
+
 @media (max-width: 860px) {
+  /* 布局骨架：侧边栏 → 底部标签栏 */
   #sidebar { display: none; }
-  .week-grid { grid-template-columns: repeat(2, 1fr); }
+  #tabbar {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+    background: var(--card); border-top: 1px solid var(--line);
+    padding: 5px 4px calc(5px + env(safe-area-inset-bottom));
+    box-shadow: 0 -4px 24px -8px rgba(16,24,40,.18);
+  }
+  .tab-item {
+    flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
+    border: none; background: none; color: var(--muted); font-family: inherit;
+    font-size: 10.5px; padding: 5px 2px; border-radius: 10px; cursor: pointer;
+  }
+  .tab-item svg { width: 20px; height: 20px; }
+  .tab-item.active { color: var(--primary); font-weight: 700; }
+  .fab { display: flex; }
+
+  /* 顶栏：隐藏快速添加（由悬浮按钮代替），标题收紧 */
+  #topbar { padding: 12px 14px; }
+  .tb-left h1 { font-size: 17px; }
+  .tb-sub { font-size: 11.5px; }
+  .quickadd { display: none; }
+  .btn-sudden { padding: 0 11px; font-size: 12.5px; }
+
+  /* 主区域留出标签栏高度 */
+  #view { padding: 14px 14px calc(100px + env(safe-area-inset-bottom)); }
+
+  /* 仪表盘 / 卡片 */
+  .card { padding: 14px; border-radius: 12px; }
+  .hero { padding: 20px 18px; border-radius: 14px; }
+  .hero-hi { font-size: 19px; }
+  .hero-stats { gap: 16px; }
   .dash-grid { grid-template-columns: 1fr; }
+  .stats-grid { gap: 10px; }
+  .stat-card { padding: 13px; }
+
+  /* 今日时间轴 */
+  .tl-head { flex-wrap: wrap; gap: 8px; }
+  .day-nav { flex-wrap: wrap; row-gap: 6px; }
+  .day-nav input[type="date"] { display: none; }
+  .tl-hour-label { width: 38px; font-size: 9px; }
+  .tl-block { left: 5px; right: 5px; }
+  .mini-time { width: 76px; font-size: 10.5px; }
+  .day-nav .dn-label { font-size: 13.5px; min-width: 110px; }
+
+  /* 本周：七列 → 单列日卡 */
+  .week-grid { grid-template-columns: 1fr; gap: 8px; }
+  .wk-col { min-height: auto; }
+  .week-focus { grid-template-columns: 1fr; }
+
+  /* 本月：紧凑格子，最多显示 2 条 */
+  .month-grid { gap: 5px; }
+  .m-cell { min-height: 72px; padding: 5px; border-radius: 8px; }
+  .m-cell .m-num { font-size: 12px; }
+  .m-item { font-size: 9.5px; padding: 1px 4px; }
+  .m-cell .m-item:nth-child(n+4) { display: none; }
+  .m-week-head { font-size: 10.5px; }
+
+  /* 文献 / 任务库 */
+  .ref-grid { grid-template-columns: 1fr; }
+  .card.scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .lib-table { min-width: 680px; }
+  .filter-bar input[type="text"] { width: 100% !important; }
+
+  /* 弹窗 / 表单 / 登录页 */
+  .modal-card { width: 96vw; }
+  .modal-head { padding: 14px 16px 0; }
+  .modal-body { padding: 12px 16px; }
+  .modal-foot { padding: 12px 16px 16px; }
+  .form-grid2, .form-grid3 { grid-template-columns: 1fr; }
+  .login-card { width: 92vw; padding: 28px 22px 22px; }
+  .report-src { min-height: 300px; }
+
+  /* 触控目标放大 */
+  .icon-btn { width: 34px; height: 34px; }
+  .tc-check { width: 22px; height: 22px; }
 }
