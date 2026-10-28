@@ -88,7 +88,7 @@ GitHub 免费账户的 Pages 只对公开仓库开放，但页面托管可以交
 | 场景 | 做法 |
 | --- | --- |
 | GitHub Pages（免费） | 见上一节"部署到 GitHub Pages"，静态页面 + 仓库当数据库 |
-| 云服务器 / VPS | 把整个目录传上去，`node server.js`（建议配合 pm2：`pm2 start server.js --name workbench`），再用 Caddy/Nginx 套 HTTPS |
+| 云服务器 / VPS | **推荐 Docker**：`docker compose up -d --build`，详见 [deploy/服务器部署指南.md](deploy/服务器部署指南.md)（按腾讯云轻量 Ubuntu + Docker 定制的逐步操作 + 数据迁移步骤）；或裸跑 `node server.js` 配 systemd/pm2 |
 | 家里的电脑 | 同上 + 内网穿透（Cloudflare Tunnel / Tailscale）即可在外访问 |
 | 免费托管平台 | 支持 Node 的平台（如 Render / Railway / Fly.io）直接跑 `server.js`，用 `WORKBENCH_PASSWORD` 环境变量设密码 |
 
@@ -103,9 +103,9 @@ GitHub 免费账户的 Pages 只对公开仓库开放，但页面托管可以交
 ### 安全机制
 
 - 未登录访问只能看到登录页，工作台界面与数据完全不可见；
-- 密码 scrypt 加盐哈希后存储在 `server-config.json`，明文不落盘；
+- 密码 scrypt 加盐哈希后存储在 `data/server-config.json`，明文不落盘；
 - 登录令牌为 HMAC 签名、30 天有效；同 IP 连续 6 次密码错误锁定 15 分钟；
-- `data/`（你的数据）与 `server-config.json`（密码哈希）禁止一切外部 HTTP 访问，路径穿越已拦截；
+- `data/`（你的数据与密码哈希）整个目录禁止一切外部 HTTP 访问，路径穿越已拦截；
 - 数据文件 `data/db.json`，定期复制一份即完成备份（页面「设置」里也可导出 JSON）。
 
 ### 同步机制说明
@@ -210,27 +210,30 @@ GitHub 免费账户的 Pages 只对公开仓库开放，但页面托管可以交
 
 ```
 工作台/
-├── index.html        # 入口页面
-├── server.js         # 云端服务（零依赖：静态托管 + 密码登录 + 数据存储）
-├── server-config.json# 运行后生成（密码哈希，勿外泄，已被 .gitignore 忽略）
-├── data/db.json      # 运行后生成（云端数据；GitHub 模式则存于仓库中）
-├── .nojekyll         # GitHub Pages 部署用
-├── css/style.css     # 设计系统（明暗双主题）
-├── vendor/katex/     # KaTeX 本地化（公式渲染，无外网依赖）
+├── index.html           # 入口页面
+├── server.js            # 云端服务（零依赖：静态托管 + 密码登录 + 数据存储）
+├── Dockerfile           # 服务器容器化部署（配合 docker-compose.yml）
+├── docker-compose.yml   # 一条命令启动：docker compose up -d --build
+├── deploy/服务器部署指南.md  # 服务器迁移部署完整方案（含数据迁移步骤）
+├── data/                # 运行后生成（云端数据 db.json + 密码哈希 server-config.json；已被 .gitignore 忽略）
+├── .nojekyll            # GitHub Pages 部署用
+├── css/style.css        # 设计系统（明暗双主题）
+├── vendor/katex/        # KaTeX 本地化（公式渲染，无外网依赖）
 ├── js/
-│   ├── store.js      # 数据模型 & 持久化 & 演示数据（任务 + 文献）
-│   ├── scheduler.js  # 突发日程冲突检测与自动排程引擎
-│   ├── md.js         # Markdown 解析 / 快速添加语法 / 报告生成
-│   ├── refs.js       # 文献管理：BibTeX 解析/导出、阅读任务联动
-│   ├── ui.js         # 组件与视图渲染
-│   ├── sync.js       # 数据同步（自建服务器登录 / GitHub 仓库同步 / 本地模式自动适配）
-│   ├── gate.js       # 网页入口保护 + 只读分享（门禁/分享密码、访客只读模式）
-│   └── app.js        # 入口、路由、事件交互
-└── test/logic-test.js  # 逻辑回归测试（node test/logic-test.js）
+│   ├── store.js         # 数据模型 & 持久化 & 演示数据（任务 + 文献）
+│   ├── scheduler.js     # 突发日程冲突检测与自动排程引擎
+│   ├── md.js            # Markdown 解析 / 快速添加语法 / 报告生成
+│   ├── refs.js          # 文献管理：BibTeX 解析/导出、阅读任务联动
+│   ├── ui.js            # 组件与视图渲染
+│   ├── sync.js          # 数据同步（自建服务器登录 / GitHub 仓库同步 / 本地模式自动适配）
+│   ├── gate.js          # 网页入口保护 + 只读分享（门禁/分享密码、访客只读模式）
+│   └── app.js           # 入口、路由、事件交互
+└── test/                # node test/logic-test.js 与 node test/sync-race-test.js
 ```
 
 ## 运行测试
 
 ```bash
-node test/logic-test.js   # 62 项逻辑断言：MD 解析 / 排程算法 / 报告生成 / 日期工具 / BibTeX 解析与状态流转
+node test/logic-test.js        # 81 项逻辑断言：MD 解析 / 排程算法 / 报告生成 / 日期工具 / BibTeX / 加密 / 访客只读
+node test/sync-race-test.js    # 19 项同步竞态断言：防抖窗口保护 / 推送冲突重试 / 编辑代际保护
 ```
