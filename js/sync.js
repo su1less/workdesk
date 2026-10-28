@@ -17,7 +17,6 @@ const Sync = {
   token: localStorage.getItem('wb.token') || '',
   gh: null,                 // GitHub 同步配置 {repo,branch,path,token,pass,salt}
   _ghKey: null,             // 由口令派生的 AES-GCM 密钥
-  _ghSha: null,             // 数据文件当前 sha（提交用）
   _pushTimer: null,
   _pollTimer: null,
   _pushing: false,
@@ -169,7 +168,6 @@ const Sync = {
     if (!r.ok) throw new Error('GitHub 接口异常 (' + r.status + ')');
     const j = await r.json();
     if (j.encoding !== 'base64') throw new Error('数据文件超过 1MB，GitHub Contents API 无法读取，请精简数据');
-    this._ghSha = j.sha;
     let txt = this.b64decode(j.content.replace(/\s+/g, ''));
     if (txt.startsWith('WBENC1:')) {
       if (!this._ghKey) throw new Error('ENC');
@@ -180,36 +178,51 @@ const Sync = {
     return { db: data.db, serverUpdatedAt: data.serverUpdatedAt || 0 };
   },
 
-  async ghPut(db) {
-    const su = Date.now();
-    let txt = JSON.stringify({ db, serverUpdatedAt: su });
-    if (this._ghKey) txt = 'WBENC1:' + await this.encryptText(this._ghKey, txt);
-    const content = this.b64encode(txt);
-    const message = '工作台数据同步 ' + new Date(su).toLocaleString('zh-CN');
+  /* 通用文件提交：自动处理 sha（新建/更新/冲突重试一次，后写优先） */
+  async ghPutFile(path, content, message, opts) {
+    const o = opts || { repo: this.gh.repo, token: this.gh.token, branch: this.gh.branch };
+    const body0 = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+    const payload = this.b64encode(body0);
+    const base = 'https://api.github.com/repos/' + o.repo + '/contents/' + path;
+    const hd = {
+      Authorization: 'Bearer ' + o.token,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28'
+    };
+    let sha = null;
+    const r0 = await fetch(base + '?ref=' + encodeURIComponent(o.branch) + '&t=' + Date.now(),
+      { headers: hd, cache: 'no-store' });
+    if (r0.status === 401) throw new Error('访问令牌无效或已过期，请重新配置 GitHub 同步');
+    if (r0.ok) sha = (await r0.json()).sha;
 
-    const attempt = async sha => {
-      const body = { message, content, branch: this.gh.branch };
-      if (sha) body.sha = sha;
-      const r = await fetch(this.ghUrl(), {
+    const attempt = async s => {
+      const body = { message, content: payload, branch: o.branch };
+      if (s) body.sha = s;
+      const r = await fetch(base, {
         method: 'PUT',
-        headers: this.ghHeaders({ 'Content-Type': 'application/json' }),
+        headers: Object.assign({ 'Content-Type': 'application/json' }, hd),
         body: JSON.stringify(body)
       });
       if (r.status === 401) throw new Error('访问令牌无效或没有写入权限，请重新配置 GitHub 同步');
       if (r.status === 409 || r.status === 422) return null;   /* sha 过期/缺失 → 重取后再试 */
       if (!r.ok) throw new Error('GitHub 写入失败 (' + r.status + ')');
       const j = await r.json().catch(() => ({}));
-      if (j.content && j.content.sha) this._ghSha = j.content.sha;
-      return true;
+      return (j.content && j.content.sha) || true;
     };
 
-    let ok = await attempt(this._ghSha);
-    if (ok === null) {
-      /* 其他设备刚更新过文件：取最新 sha 后重试一次（后保存者优先） */
-      const r2 = await fetch(this.ghUrl('?ref=' + encodeURIComponent(this.gh.branch)), { headers: this.ghHeaders() });
-      this._ghSha = r2.ok ? (await r2.json()).sha : null;
-      ok = await attempt(this._ghSha);
+    let res = await attempt(sha);
+    if (res === null) {
+      const r2 = await fetch(base + '?ref=' + encodeURIComponent(o.branch), { headers: hd });
+      res = await attempt(r2.ok ? (await r2.json()).sha : null);
     }
+    return res;
+  },
+
+  async ghPut(db) {
+    const su = Date.now();
+    let txt = JSON.stringify({ db, serverUpdatedAt: su });
+    if (this._ghKey) txt = 'WBENC1:' + await this.encryptText(this._ghKey, txt);
+    await this.ghPutFile(this.gh.path, txt, '工作台数据同步 ' + new Date(su).toLocaleString('zh-CN'));
     return su;
   },
 
@@ -312,6 +325,20 @@ const Sync = {
       if (r.status === 401) { UI.toast('令牌无效或已过期', 'err'); return; }
       if (r.status === 404) { UI.toast('仓库不存在，或令牌未授权访问该仓库', 'err'); return; }
       if (!r.ok) { UI.toast('GitHub 校验失败（' + r.status + '）', 'err'); return; }
+
+      /* 维护仓库根目录 site-config.json（网页门禁用；保留已有门禁设置） */
+      try {
+        const rs = await fetch('https://api.github.com/repos/' + repo + '/contents/site-config.json?ref=' + encodeURIComponent(branch),
+          { headers: { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json' } });
+        let site = null;
+        if (rs.ok) site = JSON.parse(this.b64decode((await rs.json()).content.replace(/\s+/g, '')));
+        if (!site || site.repo !== repo || site.branch !== branch) {
+          await this.ghPutFile('site-config.json',
+            { repo, branch, gate: (site && site.gate) || null },
+            '工作台站点配置', { repo, token, branch });
+        }
+      } catch (e) { /* 非致命：门禁可在设置中再生成 */ }
+
       const cfg = { repo, branch, path, token, pass: pass || '', salt: (this.gh && this.gh.salt) || this.b64rnd(16) };
       localStorage.setItem('wb.gh', JSON.stringify(cfg));
       UI.closeModal();

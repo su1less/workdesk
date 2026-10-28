@@ -21,9 +21,12 @@ const App = {
     Store.load();
     this.applyTheme();
     this.bindEvents();
-    this.render();
-    /* 云端同步（检测到后端时启用登录与同步），数据就绪后再弹晨报 */
-    Sync.init().then(() => this.maybeBriefing());
+    /* 网页门禁（静态部署可在设置中开启）→ 通过后再展示界面 */
+    Gate.init().then(() => {
+      this.render();
+      /* 云端同步（检测到后端时启用登录与同步），数据就绪后再弹晨报 */
+      Sync.init().then(() => this.maybeBriefing());
+    });
     /* 今日视图每分钟刷新（当前时间线） */
     setInterval(() => {
       if (this.state.view === 'today' && this.state.day === U.todayStr()) this.render();
@@ -464,6 +467,11 @@ const App = {
         });
         break;
       }
+
+      /* --- 网页门禁 --- */
+      case 'gate-set': Gate.modal(); break;
+      case 'gate-save': Gate.save(); break;
+      case 'gate-clear': Gate.clear(); break;
       case 'set-export': this.download('工作台备份_' + U.todayStr() + '.json', Store.exportJSON()); UI.toast('备份文件已下载'); break;
       case 'set-import': document.getElementById('setFile').click(); break;
       case 'set-demo': {
@@ -813,6 +821,7 @@ const App = {
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-ghost btn-sm" data-act="gh-pull-now">🔄 立即同步</button>
             <button class="btn btn-ghost btn-sm" data-act="gh-config">⚙ 修改配置</button>
+            <button class="btn btn-ghost btn-sm" data-act="gate-set">🔒 网页门禁密码</button>
           </div></div>`
         : `<div class="form-row"><label>☁ 云端同步（未启用）</label>
           <div style="font-size:12.5px;color:var(--muted);margin-bottom:9px;line-height:1.7">

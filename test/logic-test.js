@@ -14,6 +14,7 @@ load('scheduler.js', ['Scheduler']);
 load('md.js', ['MD']);
 load('refs.js', ['Refs']);
 load('sync.js', ['Sync']);
+load('gate.js', ['Gate']);
 
 let pass = 0, fail = 0;
 const t = (name, cond) => { if (cond) { pass++; } else { fail++; console.log('  ✗ FAIL:', name); } };
@@ -213,6 +214,15 @@ t('b64 大文本往返（分块）', Sync.b64decode(Sync.b64encode(big)) === big
   try { await Sync.decryptText(wrongKey, enc); } catch (e) { failed = true; }
   t('错误口令解密失败', failed);
   t('密文不含明文', !enc.includes('加密任务测试'));
+  /* 网页门禁哈希 */
+  const gs = Gate.b64rnd ? null : null;
+  const salt2 = Sync.b64rnd(16);
+  const h1 = await Gate.deriveHash('门禁口令测试', salt2);
+  const h2 = await Gate.deriveHash('门禁口令测试', salt2);
+  const h3 = await Gate.deriveHash('其他口令', salt2);
+  const h4 = await Gate.deriveHash('门禁口令测试', Sync.b64rnd(16));
+  t('门禁哈希确定性', h1 === h2 && /^[0-9a-f]{64}$/.test(h1));
+  t('门禁哈希敏感性（口令/盐不同则不同）', h1 !== h3 && h1 !== h4);
   finish();
 })();
 
