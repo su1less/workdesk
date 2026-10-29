@@ -6,7 +6,7 @@
  * 运行：node test/server-test.js
  * ============================================================ */
 'use strict';
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const http = require('http');
 const fs = require('fs');
 const os = require('os');
@@ -26,11 +26,12 @@ const ok = (cond, name) => {
 function req(method, p, opts) {
   const o = opts || {};
   return new Promise((resolve, reject) => {
+    const url = /^http/.test(p) ? p : BASE + p;   /* 支持完整 URL（第二实例用） */
     const data = o.body ? JSON.stringify(o.body) : null;
     const headers = {};
     if (data) { headers['Content-Type'] = 'application/json'; headers['Content-Length'] = Buffer.byteLength(data); }
     if (o.token) headers.Authorization = 'Bearer ' + o.token;
-    const r = http.request(BASE + p, { method, headers }, res => {
+    const r = http.request(url, { method, headers }, res => {
       const chunks = [];
       res.on('data', c => chunks.push(c));
       res.on('end', () => {
@@ -160,6 +161,40 @@ async function main() {
     for (let i = 0; i < 6; i++) await req('POST', '/api/login', { body: { password: 'bad-' + i } });
     r = await req('POST', '/api/login', { body: { password: OWNER_PW } });
     ok(r.status === 429, '连续 6 次错误后被锁定 → 429');
+
+    console.log('\n== 改密码即时生效（无环境变量实例，不重启） ==');
+    const PORT2 = PORT + 1, BASE2 = 'http://127.0.0.1:' + PORT2;
+    const dataDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-data2-'));
+    const child2 = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+      env: Object.assign({}, process.env, { PORT: String(PORT2), WB_DATA_DIR: dataDir2 }),
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    child2.stderr.on('data', d => process.stderr.write('[server2] ' + d));
+    let initPw = '';
+    child2.stdout.on('data', d => {
+      if (!initPw) {
+        const m = String(d).match(/[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}/);
+        if (m) initPw = m[0];
+      }
+    });
+    let up2 = false;
+    for (let i = 0; i < 50 && !up2; i++) {
+      await new Promise(rs => setTimeout(rs, 100));
+      try { await req('GET', BASE2 + '/api/ping'); up2 = true; } catch (e) {}
+    }
+    await new Promise(rs => setTimeout(rs, 200));
+    ok(up2 && initPw, '第二实例启动并捕获初始密码');
+    r = await req('POST', BASE2 + '/api/login', { body: { password: initPw } });
+    ok(r.status === 200, '初始密码登录 → ok');
+    const cp = spawnSync(process.execPath, [path.join(__dirname, '..', 'server.js'), '--set-password', 'NewPass-2026!'],
+      { env: Object.assign({}, process.env, { WB_DATA_DIR: dataDir2 }) });
+    ok(cp.status === 0, '--set-password 执行成功');
+    r = await req('POST', BASE2 + '/api/login', { body: { password: initPw } });
+    ok(r.status === 401, '旧密码立即失效（服务器未重启）');
+    r = await req('POST', BASE2 + '/api/login', { body: { password: 'NewPass-2026!' } });
+    ok(r.status === 200, '新密码立即生效（服务器未重启）');
+    try { child2.kill(); } catch (e) {}
+    try { fs.rmSync(dataDir2, { recursive: true, force: true }); } catch (e) {}
   } finally {
     cleanup();
   }

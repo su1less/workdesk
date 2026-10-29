@@ -137,6 +137,14 @@ function shareOn() {
   return !!(s && s.enabled && s.salt && s.hash);
 }
 
+/* 登录校验用最新密码：优先环境变量，否则每次实时读磁盘配置——
+ * 这样 --set-password 改密后无需重启容器立即生效 */
+function currentAuth() {
+  if (process.env.WORKBENCH_PASSWORD) return config;
+  const c = readCfgFile();
+  return (c && c.salt && c.hash) ? c : config;
+}
+
 /* ---------- 工具 ---------- */
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -211,7 +219,8 @@ async function handleAPI(req, res, u) {
     if (f.until > Date.now()) return sendJSON(res, 429, { error: '尝试次数过多，请 15 分钟后再试' });
     let body;
     try { body = await readBody(req); } catch (e) { return sendJSON(res, 400, { error: '请求格式错误' }); }
-    if (!body || body.password == null || !safeEq(scrypt(body.password, config.salt), config.hash)) {
+    const auth = currentAuth();
+    if (!body || body.password == null || !safeEq(scrypt(body.password, auth.salt), auth.hash)) {
       f.n++;
       if (f.n >= 6) { f.until = Date.now() + 15 * 60000; f.n = 0; }
       return sendJSON(res, 401, { error: '密码不正确' });
