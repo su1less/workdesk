@@ -806,3 +806,131 @@ body.readonly .fab { display: none !important; }
   .icon-btn { width: 34px; height: 34px; }
   .tc-check { width: 22px; height: 22px; }
 }
+
+/* ============ Notion 风格文档编辑器（ndoc） ============ */
+.ndoc-wrap { display: flex; flex-direction: column; height: calc(100vh - 170px); min-height: 460px; margin: -6px -10px -26px; }
+.ndoc-top {
+  display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+  border-bottom: 1px solid var(--line); background: var(--bg); position: sticky; top: 0; z-index: 5;
+}
+.ndoc-meta { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ndoc-meta select {
+  border: none; background: transparent; color: var(--text); font-family: inherit;
+  font-size: 13px; font-weight: 600; cursor: pointer; outline: none; padding: 4px 2px;
+}
+.ndoc-subtext { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ndoc-top-r { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.ndoc-save { font-size: 12px; color: var(--muted); }
+.ndoc-scroll { flex: 1; overflow-y: auto; }
+
+.ndoc-page { max-width: 760px; margin: 0 auto; padding: 44px 32px 120px; }
+.ndoc-title { font-size: 36px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.25; margin: 0 0 4px; color: var(--text); overflow-wrap: break-word; }
+.ndoc-title-in {
+  display: block; width: 100%; border: none; outline: none; background: transparent; resize: none; overflow: hidden;
+  font-family: inherit; font-size: 36px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.25;
+  color: var(--text); margin: 0 0 4px; padding: 0;
+}
+.ndoc-title-in::placeholder { color: var(--line2); }
+.ndoc-sub-in {
+  display: block; width: 100%; border: none; outline: none; background: transparent;
+  font-family: inherit; font-size: 14px; color: var(--muted); margin: 0 0 26px; padding: 0;
+}
+.ndoc-hint { margin-top: 28px; font-size: 12px; color: var(--muted); opacity: 0.85; user-select: none; }
+.ndoc-hint b { color: var(--primary); }
+
+/* ---- 块 ---- */
+.nb { position: relative; }
+.nb-w { position: relative; border-radius: 4px; padding: 2px 4px; margin: 0 -4px; }
+.nb:not(.ro) .nb-w { cursor: text; }
+.nb.editing .nb-w { background: color-mix(in srgb, var(--primary) 5%, transparent); }
+.nb-b { font-size: 16px; line-height: 1.8; color: var(--text); min-height: 1.2em; overflow-wrap: break-word; }
+.nb-empty::before { content: '输入正文，键入 / 插入标题、公式、图片…'; color: var(--line2); }
+.nb.ro .nb-b { min-height: 0; }
+
+/* 块内 Markdown 排版（Notion 观感，覆盖 .md-preview 的小字号） */
+.ndoc-page .md-preview { font-size: 16px; line-height: 1.8; }
+.ndoc-page .md-preview h1 { font-size: 28px; margin: 26px 0 10px; padding: 0; border: none; font-weight: 750; letter-spacing: -0.3px; }
+.ndoc-page .md-preview h2 { font-size: 22px; margin: 22px 0 8px; color: var(--text); font-weight: 700; letter-spacing: -0.2px; }
+.ndoc-page .md-preview h3 { font-size: 18px; margin: 18px 0 6px; font-weight: 650; }
+.ndoc-page .md-preview h4, .ndoc-page .md-preview h5, .ndoc-page .md-preview h6 { font-size: 16px; margin: 14px 0 6px; font-weight: 600; }
+.ndoc-page .md-preview ul, .ndoc-page .md-preview ol { padding-left: 26px; margin: 6px 0; }
+.ndoc-page .md-preview li { margin: 3px 0; }
+.ndoc-page .md-preview ul.contains-task-list { list-style: none; padding-left: 4px; }
+.ndoc-page .md-preview blockquote {
+  border-left: 3px solid var(--text); opacity: 0.9; margin: 10px 0; padding: 2px 0 2px 14px; color: var(--text);
+}
+.ndoc-page .md-preview pre {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  padding: 14px 16px; font-size: 13.5px; line-height: 1.6; overflow-x: auto; margin: 10px 0;
+}
+.ndoc-page .md-preview code { background: color-mix(in srgb, var(--text) 8%, transparent); border-radius: 4px; padding: 2px 6px; font-size: 0.86em; }
+.ndoc-page .md-preview pre code { background: none; padding: 0; font-size: inherit; }
+.ndoc-page .md-preview img { max-width: 100%; border-radius: 6px; display: block; margin: 10px auto; transition: box-shadow 0.15s; }
+.ndoc-page .md-preview a > img:hover { box-shadow: 0 6px 24px rgba(0,0,0,0.14); }
+.ndoc-page .md-preview table { border-collapse: collapse; margin: 10px 0; font-size: 14.5px; }
+.ndoc-page .md-preview th, .ndoc-page .md-preview td { border: 1px solid var(--line); padding: 7px 12px; text-align: left; }
+.ndoc-page .md-preview th { background: color-mix(in srgb, var(--text) 5%, transparent); font-weight: 600; }
+.ndoc-page .md-preview hr { border: none; border-top: 1px solid var(--line); margin: 20px 0; }
+.ndoc-page .md-preview .katex-display { overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
+
+/* 编辑态 textarea：与渲染态同排版，透明无缝 */
+.nb-ta {
+  display: block; width: 100%; border: none; outline: none; resize: none; overflow: hidden;
+  background: transparent; color: var(--text); font-family: inherit;
+  font-size: 16px; line-height: 1.8; padding: 2px 4px; margin: 0 -4px; caret-color: var(--primary);
+}
+
+/* 块左侧悬浮操作（+ / ⋮⋮） */
+.nb-g {
+  position: absolute; left: -52px; top: 0; display: flex; gap: 2px;
+  opacity: 0; transition: opacity 0.12s; user-select: none;
+}
+.nb:hover .nb-g, .nb.editing .nb-g { opacity: 1; }
+.nb-btn {
+  width: 22px; height: 22px; border: none; border-radius: 5px; background: transparent;
+  color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.nb-btn:hover { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); }
+
+/* 块菜单（上移/下移/复制/删除） */
+.nb-menu {
+  position: absolute; left: -58px; top: 26px; z-index: 30; min-width: 128px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.16); padding: 5px; display: flex; flex-direction: column;
+}
+.nb-menu button {
+  border: none; background: transparent; color: var(--text); font-family: inherit; font-size: 13px;
+  text-align: left; padding: 7px 10px; border-radius: 7px; cursor: pointer; white-space: nowrap;
+}
+.nb-menu button:hover { background: color-mix(in srgb, var(--text) 7%, transparent); }
+.nb-menu button.danger { color: var(--red); }
+
+/* Slash 插入菜单 */
+.slash-menu {
+  position: absolute; left: 0; top: calc(100% + 6px); z-index: 40; min-width: 200px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 10px 32px rgba(0,0,0,0.18); padding: 5px; max-height: 260px; overflow-y: auto;
+}
+.slash-menu button {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  border: none; background: transparent; color: var(--text); font-family: inherit; font-size: 13.5px;
+  padding: 7px 10px; border-radius: 7px; cursor: pointer; text-align: left;
+}
+.slash-menu button.on, .slash-menu button:hover { background: color-mix(in srgb, var(--primary) 12%, transparent); }
+.slash-menu .si-ic {
+  width: 26px; height: 26px; border-radius: 6px; background: var(--bg);
+  display: inline-flex; align-items: center; justify-content: center; font-size: 12.5px; color: var(--muted); flex: none;
+}
+
+/* 手机适配：隐藏左侧悬浮钮，块菜单改为相对块定位 */
+@media (max-width: 860px) {
+  .ndoc-wrap { height: auto; min-height: calc(100vh - 200px); margin: -6px -14px -30px; }
+  .ndoc-page { padding: 26px 16px 100px; }
+  .ndoc-title, .ndoc-title-in { font-size: 27px; }
+  .nb-g { left: -4px; top: -24px; opacity: 0; }
+  .nb-menu { left: 26px; top: -8px; }
+  .ndoc-page .md-preview h1 { font-size: 23px; }
+  .ndoc-page .md-preview h2 { font-size: 19px; }
+  .ndoc-page .md-preview h3 { font-size: 16.5px; }
+}

@@ -843,53 +843,38 @@ const UI = {
     const d = Store.getDoc(App.state.docs.editing);
     if (!d) return UI.empty('🤔', '文档不存在', '可能已被删除', `<button class="btn btn-primary btn-sm" data-act="doc-back">返回列表</button>`);
     const ro = !!Store.readOnly;
-    const tab = App.state.docs.tab || 'edit';
-
-    const tb = (label, title, b, a, p) =>
-      `<button class="de-tbtn" title="${title}" ${ro ? 'disabled' : ''} data-act="doc-ins" data-b="${UI.esc(b || '')}" data-a="${UI.esc(a || '')}" data-p="${UI.esc(p || '')}">${label}</button>`;
+    const ty = UI.DOCTYPE[d.type] || UI.DOCTYPE.other;
 
     return `
-    <div class="doc-editor">
-      <div class="de-head">
+    <div class="ndoc-wrap">
+      <div class="ndoc-top">
         <button class="icon-btn" data-act="doc-back" title="返回列表">
           <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
-        ${ro ? '' : `<input id="docTitle" type="text" value="${UI.esc(d.title)}" placeholder="标题" data-act-input="doc-title">
-        <input id="docSub" type="text" value="${UI.esc(d.sub)}" placeholder="期号 / 时间段（可选）" data-act-input="doc-sub">
-        <select id="docType" data-act-change="doc-type">
-          ${Object.entries(UI.DOCTYPE).map(([k, v]) => `<option value="${k}" ${d.type === k ? 'selected' : ''}>${v.l}</option>`).join('')}
-        </select>`}
-        ${ro ? `<span class="chip chip-gray">👁 只读</span>` : ''}
-        <div class="de-mode">
-          <button class="${tab === 'edit' ? 'active' : ''}" data-act="doc-tab" data-v="edit">编辑</button>
-          <button class="${tab === 'preview' ? 'active' : ''}" data-act="doc-tab" data-v="preview">预览</button>
+        <div class="ndoc-meta">
+          ${ro
+            ? `<span class="chip ${ty.c}">${ty.l}</span>${d.sub ? `<span class="ndoc-subtext">${UI.esc(d.sub)}</span>` : ''}`
+            : `<select id="docType" data-act-change="doc-type">
+                ${Object.entries(UI.DOCTYPE).map(([k, v]) => `<option value="${k}" ${d.type === k ? 'selected' : ''}>${v.l}</option>`).join('')}
+               </select>`}
         </div>
-        ${ro ? '' : `<button class="icon-btn" data-act="doc-del" title="删除文档" style="color:var(--red)">
-          <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-        </button>`}
+        <div class="ndoc-top-r">
+          ${ro ? `<span class="chip chip-gray">👁 只读</span>` : `<span class="ndoc-save">已自动保存</span>
+            <button class="icon-btn" data-act="doc-del" title="删除文档" style="color:var(--red)">
+              <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            </button>`}
+        </div>
       </div>
-      ${ro ? '' : `
-      <div class="de-toolbar">
-        ${tb('H1', '一级标题', '# ', '', '标题')}
-        ${tb('H2', '二级标题', '## ', '', '标题')}
-        ${tb('B', '粗体', '**', '**', '粗体')}
-        ${tb('I', '斜体', '*', '*', '斜体')}
-        ${tb('S', '删除线', '~~', '~~', '删除线')}
-        ${tb('•', '无序列表', '- ', '', '事项')}
-        ${tb('☑', '任务清单', '- [ ] ', '', '待办事项')}
-        ${tb('</>', '代码块', '\n```python\n', '\n```\n', 'print("hello")')}
-        ${tb('$x', '行内公式', '$', '$', 'E=mc^2')}
-        ${tb('$$', '块级公式', '\n$$\n', '\n$$\n', '\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}')}
-        ${tb('🖼', '插入图片', '', '', '')}
-        ${tb('🔗', '链接', '[', '](https://)', '链接文字')}
-        ${tb('▦', '表格', '\n| 列1 | 列2 | 列3 |\n| --- | --- | --- |\n| ', ' |  |  |\n', '内容')}
-        ${tb('❝', '引用', '\n> ', '\n', '引用内容')}
-      </div>`}
-      <div class="de-body" data-tab="${tab}">
-        ${ro ? '' : `<textarea id="docTa" spellcheck="false" placeholder="在这里用 Markdown 写周报 / 月报…" data-act-input="doc-ta">${UI.esc(d.content)}</textarea>`}
-        <div class="md-preview de-preview" id="docPv"></div>
+      <div class="ndoc-scroll">
+        <div class="ndoc-page">
+          ${ro
+            ? `<h1 class="ndoc-title">${UI.esc(d.title || '未命名文档')}</h1>`
+            : `<input id="docTitle" class="ndoc-title-in" type="text" value="${UI.esc(d.title)}" placeholder="无标题" data-act-input="doc-title" autocomplete="off">
+               <input id="docSub" class="ndoc-sub-in" type="text" value="${UI.esc(d.sub || '')}" placeholder="期号 / 时间段（可选）" data-act-input="doc-sub" autocomplete="off">`}
+          <div id="ndocHost"></div>
+          ${ro ? '' : `<div class="ndoc-hint">点击正文任意位置开始编辑 · 键入 <b>/</b> 插入标题、列表、任务、<b>公式</b>、图片、代码块 · <b>Enter</b> 分段</div>`}
+        </div>
       </div>
-      ${ro ? '' : `<input type="file" id="docImg" accept="image/*" style="display:none" data-act-change="doc-img-file">`}
     </div>`;
   }
 };

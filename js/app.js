@@ -51,8 +51,17 @@ const App = {
       library: UI.library, refs: UI.refsView, reports: UI.reports, docs: UI.docsView, import: UI.importView
     };
     document.getElementById('view').innerHTML = map[s.view].call(UI);
-    /* 文档编辑器：渲染预览 + 公式排版 */
-    if (s.view === 'docs' && s.docs.mode === 'edit') this.renderDocPreview();
+    /* 文档编辑器：挂载块编辑器（点哪改哪 · 实时渲染 · 公式排版）；离开时冲刷保存 */
+    const inDoc = s.view === 'docs' && s.docs.mode === 'edit';
+    if (typeof Blocks !== 'undefined') {
+      if (inDoc) {
+        const host = document.getElementById('ndocHost');
+        if (host) Blocks.mount(host, s.docs.editing);
+      } else if (Blocks.cur) {
+        Blocks.flush();
+        Blocks.cur = null;
+      }
+    }
     const subs = {
       dashboard: ['仪表盘', '总览今日安排、进度与延期事项'],
       today: ['今日', U.fmtFull(s.day) + ' ' + U.fmtWeekCN(s.day) + (s.day === U.todayStr() ? ' · 今天' : '')],
@@ -116,10 +125,6 @@ const App = {
       } else if (k === 'rProg') {
         const v = document.getElementById('rProgVal');
         if (v) v.textContent = el.value + '%';
-      } else if (k === 'doc-ta') {
-        this.docAutosave('content', el.value);
-        clearTimeout(this._docPvTimer);
-        this._docPvTimer = setTimeout(() => this.renderDocPreview(), 350);
       } else if (k === 'doc-title') {
         this.docAutosave('title', el.value.trim() || '未命名文档');
       } else if (k === 'doc-sub') {
@@ -186,12 +191,6 @@ const App = {
       case 'ref-tag': s.refs.tag = el.value; this.render(); break;
       case 'ref-sort': s.refs.sort = el.value; this.render(); break;
       case 'doc-type': this._docPatch({ type: el.value }); this.render(); break;
-      case 'doc-img-file': {
-        const f = el.files[0];
-        if (f) this.docInsertImage(f);
-        el.value = '';
-        break;
-      }
       case 'bib-file': {
         const f = el.files[0];
         if (!f) return;
@@ -479,16 +478,15 @@ const App = {
           title = t.slice(0, 7).replace('-', '年') + '月报';
           sub = '';
         } else { title = '新建文档'; sub = ''; }
-        const d = Store.addDoc({ type, title, sub, content: '# ' + title + '\n\n## 一、\n\n## 二、\n\n## 三、\n' });
-        s.docs.editing = d.id; s.docs.mode = 'edit'; s.docs.tab = 'edit';
+        const d = Store.addDoc({ type, title, sub, content: '' });
+        s.docs.editing = d.id; s.docs.mode = 'edit';
         this.render();
-        const ti = document.getElementById('docTa');
+        const ti = document.getElementById('docTitle');
         if (ti) { ti.focus(); ti.setSelectionRange(ti.value.length, ti.value.length); }
         break;
       }
-      case 'doc-open': s.docs.editing = el.dataset.id; s.docs.mode = 'edit'; s.docs.tab = 'edit'; this.render(); break;
+      case 'doc-open': s.docs.editing = el.dataset.id; s.docs.mode = 'edit'; this.render(); break;
       case 'doc-back': this.docSaveNow(); s.docs.mode = 'list'; this.render(); break;
-      case 'doc-tab': s.docs.tab = el.dataset.v; this.docSaveNow(); this.render(); break;
       case 'doc-del': {
         UI.confirm('确定删除这篇文档吗？无法恢复。', { danger: true, okText: '删除' }).then(ok => {
           if (ok) {
@@ -499,11 +497,6 @@ const App = {
             this.render();
           }
         });
-        break;
-      }
-      case 'doc-ins': {
-        if (el.dataset.b === '' && el.dataset.a === '' && el.dataset.p === '') { this.docPickImage(); break; }
-        this.docInsert(el.dataset.b, el.dataset.a, el.dataset.p);
         break;
       }
       case 'rep-todoc': {
@@ -761,65 +754,35 @@ const App = {
   },
 
   /* ---------- 周报月报：编辑器辅助 ---------- */
-  renderDocPreview() {
-    const pv = document.getElementById('docPv');
-    const ta = document.getElementById('docTa');
-    if (!pv) return;
-    pv.innerHTML = MD.render(ta ? ta.value : (Store.getDoc(this.state.docs.editing) || {}).content || '');
-    MD.typeset(pv);
-  },
-
   _docPatch(patch) {
     if (Store.readOnly) return;
     Store.updateDoc(this.state.docs.editing, patch);
   },
 
-  /* 输入防抖保存：仅更新数据与预览，不重渲染视图（保住光标） */
+  /* 输入防抖保存（标题/期号/类型）；正文由块编辑器自行保存 */
   docAutosave(field, value) {
     if (Store.readOnly) return;
     clearTimeout(this._docTimer);
     this._docTimer = setTimeout(() => {
       this._docPatch({ [field]: value });
-      if (field === 'content') this.renderDocPreview();
     }, 700);
   },
 
   docSaveNow() {
+    if (typeof Blocks !== 'undefined' && Blocks.cur) Blocks.flush();
     if (this._docTimer) {
       clearTimeout(this._docTimer);
       this._docTimer = null;
-      /* 从 DOM 取最新值立即保存 */
-      const ta = document.getElementById('docTa');
       const ti = document.getElementById('docTitle');
       const su = document.getElementById('docSub');
       const patch = {};
-      if (ta) patch.content = ta.value;
       if (ti) patch.title = ti.value.trim() || '未命名文档';
       if (su) patch.sub = su.value.trim();
       if (Object.keys(patch).length && !Store.readOnly) Store.updateDoc(this.state.docs.editing, patch);
     }
   },
 
-  /* 在光标处插入 Markdown 片段 */
-  docInsert(before, after, placeholder) {
-    const ta = document.getElementById('docTa');
-    if (!ta || Store.readOnly) return;
-    const s0 = ta.selectionStart ?? ta.value.length;
-    const e0 = ta.selectionEnd ?? s0;
-    const sel = ta.value.slice(s0, e0) || placeholder || '';
-    ta.setRangeText(before + sel + after, s0, e0, 'end');
-    ta.focus();
-    clearTimeout(this._docTimer);
-    this._docPatch({ content: ta.value });
-    this.renderDocPreview();
-  },
-
-  docPickImage() {
-    const fi = document.getElementById('docImg');
-    if (fi) fi.click();
-  },
-
-  /* 本地图片 → 压缩内嵌 data URL → 插入文档 */
+  /* 本地图片 → 压缩内嵌 data URL */
   compressImage(file) {
     return new Promise((resolve, reject) => {
       const rd = new FileReader();
@@ -846,10 +809,11 @@ const App = {
     });
   },
 
-  async docInsertImage(file) {
+  /* 图片上传统一入口：云端模式原图直传 assets/（失败降级压缩内嵌），本地模式压缩内嵌。
+   * 返回可直接写进 Markdown 的引用（URL 或 data URL），失败返回 null */
+  async uploadImage(file) {
     try {
       if (Sync.mode === 'github' || Sync.mode === 'server') {
-        /* GitHub / 服务器模式：原图直传 assets/（保留论文级分辨率，不压缩），失败再降级压缩内嵌 */
         try {
           UI.toast('正在上传原图…');
           const dataUrl = await this.readFileAsDataURL(file);
@@ -858,17 +822,17 @@ const App = {
           }
           const ref = await (Sync.mode === 'github' ? Sync.ghPutAsset(dataUrl) : Sync.putAsset(dataUrl));
           UI.toast('原图已上传：' + ref);
-          this.docInsert('\n![图片](', ')\n', ref);
-          return;
+          return ref;
         } catch (e) {
           UI.toast('上传失败，改为压缩内嵌（' + e.message + '）', 'warn');
         }
       }
       const dataUrl = await this.compressImage(file);
       if (dataUrl.length > 400 * 1024) UI.toast('图片较大（' + Math.round(dataUrl.length / 1024) + 'KB），已内嵌；注意数据体积', 'warn');
-      this.docInsert('\n![图片](', ')\n', dataUrl);
+      return dataUrl;
     } catch (e) {
       UI.toast('图片读取失败', 'err');
+      return null;
     }
   },
 

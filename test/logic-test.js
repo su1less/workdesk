@@ -15,6 +15,7 @@ load('md.js', ['MD']);
 load('refs.js', ['Refs']);
 load('sync.js', ['Sync']);
 load('gate.js', ['Gate']);
+load('blocks.js', ['Blocks']);
 
 let pass = 0, fail = 0;
 const t = (name, cond) => { if (cond) { pass++; } else { fail++; console.log('  ✗ FAIL:', name); } };
@@ -197,6 +198,56 @@ Store.updateRef(r1.id, { status: 'read' });
 const repW2 = MD.report('week', T);
 t('周报含文献章节', /六、文献阅读/.test(repW2));
 t('周报编号顺延', /七、下周安排/.test(repW2));
+
+/* ---------- 5.5 块编辑器：Markdown ⇄ 块 ---------- */
+console.log('== Blocks parse/serialize ==');
+const bdoc = `# 第44周周报
+
+本周完成三件事，实验推进顺利。
+
+## 实验结果
+
+- [x] 数据集清洗
+- [ ] 消融实验补充
+  - 三组对照
+- 结论：$E=mc^2$
+
+\`\`\`python
+def hello():
+    print("hi")   # 代码内空行
+
+    return 1
+\`\`\`
+
+| 列1 | 列2 |
+| --- | --- |
+| a | b |
+
+> 引用一句
+> 引用两句
+
+$$
+\\int_0^1 x^2\\,dx = \\frac{1}{3}
+$$
+
+![图片](assets/img-test.png)
+
+---
+
+收尾段落。`;
+const frags = Blocks.parse(bdoc);
+t('块数量（标题/段落/标题/列表/代码/表格/引用/公式/图片/分割线/段落=11）', frags.length === 11);
+t('标题独立成块', frags[0] === '# 第44周周报');
+t('列表聚合为一块（含缩进续行）', frags[3].split('\n').length === 4 && /^- \[x\]/.test(frags[3]));
+t('代码块完整保留（含内部空行）', /print\("hi"\)/.test(frags[4]) && frags[4].split('\n').length === 6);
+t('表格聚合成块', frags[5].startsWith('| 列1'));
+t('引用聚合', frags[6] === '> 引用一句\n> 引用两句');
+t('块级公式完整', frags[7].startsWith('$$') && frags[7].trimEnd().endsWith('$$'));
+t('序列化往返一致', Blocks.serialize(frags) === bdoc);
+t('序列化再解析幂等', Blocks.serialize(Blocks.parse(Blocks.serialize(frags))) === Blocks.serialize(frags));
+t('空文档 → 空块数组', Blocks.parse('') .length === 0 && Blocks.parse('  \n\n ') .length === 0);
+t('连续段落成一块', Blocks.parse('第一行\n第二行').length === 1);
+t('序列化剔除空块', Blocks.serialize(['a', '', '  ', 'b']) === 'a\n\nb');
 
 /* ---------- 6. GitHub 同步工具（Base64 / AES-GCM 加密） ---------- */
 console.log('== Sync crypto ==');
