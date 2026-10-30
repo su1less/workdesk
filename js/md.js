@@ -167,7 +167,11 @@ const MD = {
           content = probe.title || content;
         }
         ctx.baseIndent = indent;
+        /* 行首完整日期（"- [ ] 2026-10-15：安装完成"）→ 直接作为任务日期 */
+        const iso = content.match(/^(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})\s*[：:，,（( ]\s*(.*)$/);
+        if (iso) content = iso[2] || iso[1];
         const p = MD.inline(content, ctx);
+        if (iso && !p.date) p.date = MD.normDate(iso[1]);
         const task = {
           title: p.title || '（未命名）',
           level: p.level || ctx.level,
@@ -185,6 +189,16 @@ const MD = {
         if (task.level === 'month') task.date = task.date.slice(0, 7) + '-01';
         if (p.durMin && task.start && !task.end) task.end = U.minHM(U.hm(task.start) + p.durMin);
         if (!p.date && ctx.range && task.level === 'day') task._pendingRange = ctx.range[0];
+        /* 清单条目以"W12 …"/"W14–15 …"开头且阶段标明了周号范围 → 定位到对应那一周（范围取首周） */
+        const wnMatch = task.title.match(/^W(\d{1,2})(?![\d–~—-])/) || task.title.match(/^W(\d{1,2})\s*[–~—-]\s*W?\d+/);
+        const wn = wnMatch ? wnMatch[1] : null;
+        if (wn && ctx.weekAnchor && ctx.weekBase != null && task.level === 'day') {
+          const idx = +wn - ctx.weekBase;
+          if (idx >= 0 && idx * 7 <= (U.parseDate(ctx.range[1]) - U.parseDate(ctx.weekAnchor)) / 86400000) {
+            task.date = U.addDays(ctx.weekAnchor, idx * 7);
+            delete task._pendingRange;
+          }
+        }
         res.tasks.push(task);
         lastTask = task;
         if (/每天|每周|每月|每日/.test(content)) res.warnings.push('「' + p.title + '」疑似周期性任务，已按单次导入');
@@ -253,6 +267,13 @@ const MD = {
       ctx.range = [ds[0], ds[ds.length - 1]];
       ctx.date = ds[0];
       ctx.level = /月/.test(txt) ? 'month' : 'day';
+      /* 阶段周号（"W11–W18，1.2–2.26"）：清单条目按 W 编号定位到对应周 */
+      const wk = txt.match(/W(\d{1,2})\s*[–~—-]\s*W?(\d{1,2})/);
+      if (wk) {
+        const weeks = Math.round((U.parseDate(ctx.range[1]) - U.parseDate(ctx.range[0])) / 86400000 / 7) + 1;
+        const span = +wk[2] - +wk[1] + 1;
+        if (Math.abs(weeks - span) <= 1) { ctx.weekBase = +wk[1]; ctx.weekAnchor = ctx.range[0]; }
+      }
     } else if (ds.length === 1) {
       ctx.date = ds[0];
       if (/周|week/i.test(txt)) { ctx.level = 'week'; ctx.date = U.weekStart(ds[0]); }
