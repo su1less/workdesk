@@ -1,0 +1,39 @@
+Pet artwork provenance
+======================
+Upstream project: https://github.com/PC2005-cloud/dsh-pet  (default branch: main)
+Local clone used: C:/Users/ASUS/AppData/Local/Temp/dsh-pet
+Downloaded from:  raw.githubusercontent.com/PC2005-cloud/dsh-pet/main/dsh-pet/assets/webm/
+
+animations/*.webm are unmodified transparent VP9-alpha clips from the
+official dsh-pet asset set (640x360). Renamed to ASCII keys for the web:
+
+  landing.webm   = 原地重力下蹲压缩
+  walk.webm      = 螃蟹走路            (loop)
+  idle.webm      = 待机呼吸休闲
+  look-around.webm = 东张西望
+  daze.webm      = 碎碎念-发呆碎碎念
+  yawn.webm      = 哈欠连天
+  stretch.webm   = 超大伸懒腰
+  sleep.webm     = 原地小憩沉眠        (loop)
+  wake.webm      = 打瞌睡被惊醒
+  drag.webm      = 被鼠标拖拽悬空反馈  (loop)
+  wave.webm      = 点击回应-元气挥手
+  happy.webm     = 点击回应-开心跃动
+  huffy.webm     = 点击回应-傲娇生气
+
+mascot.png is a still frame extracted locally from the official 待机呼吸休闲
+(idle.webm) clip at ~0.6s, exported losslessly from the video's own pixels so
+the standing pose matches the animation character exactly (blue twin-tail
+whale girl). Earlier derivative stills (dsh-whale.png, glm.png) were removed
+to keep a single character; stored petSkin values migrate to mascot.
+
+Character and licensing (per upstream README):
+  Character: "大肥鱼" whale girl — original character 溟月 by Bilibili user
+  @上善无形, DeepSeek derivative by @ZipZipPipe. Not an official DeepSeek mascot.
+  Code: MIT. Animation assets / prompts / source videos: open-source use
+  allowed, commercial use prohibited. Character design: CC BY-NC-SA 4.0 —
+  derivatives must publicly credit the upstream repository.
+
+This project is personal, non-commercial use. No additional rights over the
+artwork are asserted here; redistribution or commercial use requires the
+upstream rights holders' permission.

@@ -1,0 +1,87 @@
+/* Desktop companion styles are scoped to the pet host. */
+#petHost { position: fixed; inset: 0; z-index: 45; pointer-events: none; }
+#petHost .pet {
+  position: absolute; left: 0; top: 0; width: 72px; height: 96px;
+  pointer-events: auto; cursor: grab; user-select: none; touch-action: none;
+  filter: drop-shadow(0 5px 9px rgba(20, 36, 50, .22));
+}
+#petHost .pet.grab { cursor: grabbing; }
+#petHost .pet:focus-visible { outline: 2px solid var(--primary, #638aca); border-radius: 12px; }
+#petHost .pet-inner { position: relative; width: 100%; height: 100%; }
+#petHost .pet-img, #petHost .pet-video {
+  display: block; width: 100%; height: 100%; object-fit: contain;
+  object-position: center bottom; pointer-events: none; user-select: none; -webkit-user-drag: none;
+}
+/* Two alternating videos: the playing one fades in over the standing pose. */
+#petHost .pet-video { position: absolute; inset: 0; opacity: 0; transition: opacity .08s linear; }
+#petHost .pet-video.on { opacity: 1; }
+#petHost .pet-playing .pet-img { visibility: hidden; }
+/* Crab-walk mirrors with travel direction. */
+#petHost .pet-flip .pet-video, #petHost .pet-flip .pet-img { transform: scaleX(-1); }
+#petHost .skin-mascot { width: 192px; height: 192px; }
+#petHost .skin-dsh { width: 64px; height: 96px; }
+#petHost .skin-glm { width: 72px; height: 90px; }
+#petHost .skin-whale { width: 106px; height: 72px; }
+#petHost .skin-whale .pet-inner svg { display: block; width: 100%; height: 100%; }
+
+/* Speech bubble / moods */
+#petHost .pet-say {
+  position: absolute; left: 0; top: -25px; padding: 4px 9px;
+  color: var(--text); background: var(--card); border: 1px solid var(--line);
+  border-radius: 8px; box-shadow: var(--shadow); font-size: 11px;
+  white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .16s ease;
+}
+#petHost .pet-say.show { opacity: 1; }
+
+/* Doze: gentle sway on the standing pose. */
+#petHost .pet-doze .pet-inner { transform-origin: 50% 90%; animation: petSway 2.8s ease-in-out infinite; }
+@keyframes petSway { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(2.4deg); } }
+
+/* Sleep: dimmed pose, slow breathing, floating Zzz. */
+#petHost .pet-sleep .pet-img { filter: grayscale(.4) brightness(.82); animation: petBreath 3.8s ease-in-out infinite; }
+@keyframes petBreath { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.96); } }
+#petHost .pet-zzz {
+  position: absolute; right: 0; top: -14px; font-weight: 800; font-size: 15px;
+  color: #9dc4ea; text-shadow: 0 1px 4px rgba(0,0,0,.25); opacity: 0; pointer-events: none;
+  font-family: ui-monospace, monospace;
+}
+#petHost .pet-zzz span { font-size: 12px; } #petHost .pet-zzz i { font-style: normal; font-size: 9px; }
+#petHost .pet-sleep .pet-zzz { opacity: 1; animation: petZzzFloat 2.8s ease-in-out infinite; }
+@keyframes petZzzFloat {
+  0% { transform: translateY(0); opacity: 0; }
+  25% { opacity: 1; }
+  100% { transform: translateY(-26px) translateX(6px); opacity: 0; }
+}
+
+/* Right-click action menu. */
+#petHost .pet-menu {
+  position: absolute; z-index: 60; width: 150px; padding: 6px;
+  background: rgba(22, 30, 39, .95); border: 1px solid rgba(218, 236, 247, .18);
+  border-radius: 14px; box-shadow: 0 18px 50px rgba(0, 0, 0, .45);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  display: grid; gap: 2px; pointer-events: auto;
+  opacity: 0; transform: translateY(4px) scale(.98); transition: opacity .12s, transform .12s;
+}
+#petHost .pet-menu.show { opacity: 1; transform: none; }
+#petHost .pet-menu::before {
+  content: "选择动作"; display: block; padding: 4px 8px 6px;
+  font-size: 10.5px; color: #9db2c4; letter-spacing: 1px;
+}
+#petHost .pet-menu button {
+  border: none; background: transparent; color: #e7eef5; cursor: pointer;
+  font-family: inherit; font-size: 12.5px; text-align: left;
+  padding: 7px 9px; border-radius: 9px; white-space: nowrap;
+}
+#petHost .pet-menu button:hover { background: rgba(140, 185, 212, .16); }
+#petHost .pet-menu button:focus-visible { outline: 2px solid #8cb9d4; }
+
+@media (max-width: 860px) {
+  #petHost .skin-mascot { width: 136px; height: 136px; }
+  #petHost .skin-dsh { width: 54px; height: 82px; }
+  #petHost .skin-glm, #petHost .skin-img { width: 60px; height: 78px; }
+  #petHost .skin-whale { width: 86px; height: 58px; }
+}
+/* Reduced motion disables ambient loops; explicit pokes still play clips. */
+@media (prefers-reduced-motion: reduce) {
+  #petHost .pet-doze .pet-inner, #petHost .pet-sleep .pet-img, #petHost .pet-zzz { animation: none !important; }
+}

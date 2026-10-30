@@ -72,6 +72,16 @@ const Store = {
   /* 字段归一化：补齐缺失的默认字段（种子/旧备份/访客数据兼容） */
   _normalize() {
     if (!this.db.settings) this.db.settings = { workingStart: '07:00', workingEnd: '23:00', theme: 'light' };
+    /* 壁纸与桌宠（DSH 美化风格）；wallpaperUrl 存自定义壁纸地址，petImg 存自定义桌宠形象 */
+    if (!this.db.settings.wallpaper) this.db.settings.wallpaper = 'aqua';
+    if (this.db.settings.pet === undefined) this.db.settings.pet = true;
+    if (!this.db.settings.petSkin) this.db.settings.petSkin = 'mascot';
+    /* 旧版 dsh/glm/puppet 皮肤素材已下线，统一迁移到官方形象 */
+    if (!['mascot', 'whale'].includes(this.db.settings.petSkin)) this.db.settings.petSkin = 'mascot';
+    if (this.db.settings.petImg === undefined) this.db.settings.petImg = '';
+    if (this.db.settings.wallpaperMotion === undefined) this.db.settings.wallpaperMotion = true;
+    if (this.db.settings.wallpaperDim === undefined) this.db.settings.wallpaperDim = 0.18;
+    if (this.db.settings.wallpaperMediaType === undefined) this.db.settings.wallpaperMediaType = 'auto';
     if (!this.db.meta) this.db.meta = { lastBriefDate: '' };
     this.db.tasks = (this.db.tasks || []).map(t => Object.assign({
       id: this.uid(), kind: 'task', level: 'day', status: 'todo', progress: 0,
@@ -82,9 +92,10 @@ const Store = {
     this.db.refs = (this.db.refs || []).map(r => Object.assign({
       id: this.uid(), title: '', authors: '', year: null, type: 'paper', venue: '',
       doi: '', url: '', tags: [], status: 'want', rating: 0, readProgress: 0,
-      abstract: '', note: '', readAt: null, source: '',
+      abstract: '', note: '', readAt: null, source: '', cat: '',
       createdAt: Date.now(), updatedAt: Date.now()
     }, r));
+    if (!Array.isArray(this.db.chats)) this.db.chats = [];
     this.db.docs = (this.db.docs || []).map(d => Object.assign({
       id: this.uid(), title: '未命名文档', sub: '', type: 'week', content: '',
       createdAt: Date.now(), updatedAt: Date.now()
@@ -110,7 +121,9 @@ const Store = {
 
   /* 采纳服务器端数据（多设备同步 / 登录后首次拉取） */
   adoptRemote(db, serverUpdatedAt) {
+    const oldAppearance = JSON.stringify(this.db && this.db.settings);
     this.db = db;
+    this._normalize();
     if (!this.db.meta) this.db.meta = {};
     this.db.meta.serverUpdatedAt = serverUpdatedAt;
     if (!this.db.settings) this.db.settings = { workingStart: '07:00', workingEnd: '23:00', theme: 'light' };
@@ -118,7 +131,10 @@ const Store = {
     if (!Array.isArray(this.db.refs)) this.db.refs = [];
     this._skipPush = true;
     this.save();
-    if (typeof App !== 'undefined' && App.state) App.render();
+    if (typeof App !== 'undefined' && App.state) {
+      if (oldAppearance !== JSON.stringify(this.db.settings) && App.applyAppearance) App.applyAppearance();
+      App.render();
+    }
   },
 
   reset() { localStorage.removeItem(DB_KEY); this.load(); },
@@ -178,7 +194,7 @@ const Store = {
     const r = Object.assign({
       id: this.uid(), title: '', authors: '', year: null, type: 'paper', venue: '',
       doi: '', url: '', tags: [], status: 'want', rating: 0, readProgress: 0,
-      abstract: '', note: '', readAt: null, source: '',
+      abstract: '', note: '', readAt: null, source: '', cat: '',
       createdAt: Date.now(), updatedAt: Date.now()
     }, p);
     if (r.status === 'read') { if (!r.readAt) r.readAt = Date.now(); r.readProgress = 100; }
@@ -225,6 +241,49 @@ const Store = {
   },
 
   deleteDoc(id) { this.db.docs = this.db.docs.filter(d => d.id !== id); this.save(); },
+
+  /* ---------- 文献分类（分类名派生自文献的 cat 字段，'' = 未分类） ---------- */
+  refsCats() {
+    const map = new Map();
+    (this.db.refs || []).forEach(r => {
+      const c = String(r.cat || '').trim();
+      map.set(c, (map.get(c) || 0) + 1);
+    });
+    return [...map.entries()].map(([name, count]) => ({ name, count }))
+      .sort((a, b) => (a.name === '' ? 1 : 0) - (b.name === '' ? 1 : 0)
+        || a.name.localeCompare(b.name, 'zh-Hans-CN'));
+  },
+
+  /* 重命名分类（oldName='' 表示全部未分类）；newName='' 表示删除该分类 */
+  renameRefCat(oldName, newName) {
+    newName = String(newName || '').trim();
+    oldName = String(oldName || '');
+    if (!newName && !oldName) return 0;
+    let n = 0;
+    (this.db.refs || []).forEach(r => {
+      if (String(r.cat || '') === oldName) { r.cat = newName; r.updatedAt = Date.now(); n++; }
+    });
+    if (n) this.save();
+    return n;
+  },
+
+  /* ---------- AI 对话 CRUD（随工作台数据一起云端同步） ---------- */
+  MAX_CHATS: 50,
+
+  addChat() {
+    const c = { id: this.uid(), title: '新对话', messages: [], createdAt: Date.now(), updatedAt: Date.now() };
+    this.db.chats.push(c);
+    if (this.db.chats.length > this.MAX_CHATS) {
+      this.db.chats.sort((a, b) => (a.updatedAt || 0) - (b.updatedAt || 0));
+      this.db.chats = this.db.chats.slice(-this.MAX_CHATS);
+    }
+    this.save();
+    return c;
+  },
+
+  getChat(id) { return (this.db.chats || []).find(c => c.id === id); },
+
+  deleteChat(id) { this.db.chats = this.db.chats.filter(c => c.id !== id); this.save(); },
 
   refStats() {
     const list = this.db.refs || [];

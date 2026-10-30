@@ -609,6 +609,8 @@ const UI = {
   refsView() {
     const f = App.state.refs;
     let list = (Store.db.refs || []).slice();
+    if (f.cat === '__none') list = list.filter(r => !String(r.cat || '').trim());
+    else if (f.cat) list = list.filter(r => String(r.cat || '').trim() === f.cat);
     if (f.q) {
       const q = f.q.toLowerCase();
       list = list.filter(r => (r.title + ' ' + (r.authors || '') + ' ' + (r.venue || '') + ' ' + (r.tags || []).join(' ') + ' ' + (r.note || '')).toLowerCase().includes(q));
@@ -624,6 +626,8 @@ const UI = {
     list.sort(sorters[f.sort] || sorters.added);
 
     const st = Store.refStats();
+    const cats = Store.refsCats();
+    const uncat = (cats.find(c => c.name === '') || { count: 0 }).count;
     const allTags = [...new Set((Store.db.refs || []).flatMap(r => r.tags || []))].sort();
     const NEXT = { want: '在读', reading: '已读', read: '想读' };
 
@@ -641,6 +645,13 @@ const UI = {
         <button class="btn btn-ghost btn-sm" data-act="ref-export" ${st.total ? '' : 'disabled'}>📤 导出 BibTeX</button>
         <button class="btn btn-primary btn-sm" data-act="ref-new">＋ 添加文献</button>
       </div>
+    </div>
+    <div class="filter-bar">
+      <button class="chip ${!f.cat ? 'chip-teal cat-chip' : 'chip-gray cat-chip'}" data-act="ref-cat" data-v="">全部 ${st.total}</button>
+      <button class="chip ${f.cat === '__none' ? 'chip-teal cat-chip' : 'chip-gray cat-chip'}" data-act="ref-cat" data-v="__none">未分类 ${uncat}</button>
+      ${cats.filter(c => c.name).map(c =>
+        `<button class="chip ${f.cat === c.name ? 'chip-teal cat-chip' : 'chip-gray cat-chip'}" data-act="ref-cat" data-v="${UI.esc(c.name)}">📁 ${UI.esc(c.name)} ${c.count}</button>`).join('')}
+      <button class="chip chip-gray cat-chip" data-act="ref-cat-manage" title="重命名 / 删除分类">⚙ 管理分类</button>
     </div>
     <div class="filter-bar">
       <input type="text" placeholder="搜索标题 / 作者 / 期刊 / 标签…" value="${UI.esc(f.q)}" data-act-input="ref-q" style="width:260px">
@@ -672,6 +683,7 @@ const UI = {
         return `<div class="ref-card" data-act="open-ref" data-id="${r.id}">
           <div class="ref-top">
             <span class="chip chip-purple">${ty.l}</span>
+            ${String(r.cat || '').trim() ? `<span class="chip chip-teal">📁 ${UI.esc(r.cat)}</span>` : ''}
             <span class="chip ${sm.c}">${sm.l}</span>
             ${r.rating ? `<span class="ref-stars" title="评分 ${r.rating}/5">${Refs.stars(r.rating)}</span>` : ''}
           </div>
@@ -690,8 +702,8 @@ const UI = {
           </div>
         </div>`;
       }).join('')}
-    </div>` : UI.empty('📚', '文献库是空的', '手动添加，或从 Zotero 等工具导出 .bib 文件导入',
-      `<button class="btn btn-primary btn-sm" data-act="ref-import">📥 导入 BibTeX</button>`)}`;
+    </div>` : `<div class="card">${UI.empty('📚', '这个分类下还没有文献', '调整分类筛选，或添加 / 导入文献',
+      `<button class="btn btn-primary btn-sm" data-act="ref-new">＋ 添加文献</button>`)}</div>`}`;
   },
 
   /* ---------- 文献编辑弹窗 ---------- */
@@ -715,11 +727,14 @@ const UI = {
             <input id="rYear" type="number" value="${d.year || ''}" placeholder="2024" min="1900" max="2100"></div>
         </div>
         <div class="form-grid2">
+          <div class="form-row"><label>分类（输入名称即可新建）</label>
+            <input id="rCat" type="text" value="${UI.esc(d.cat || '')}" list="rCatList" placeholder="例如：NLP / 强化学习 / 教材">
+            <datalist id="rCatList">${Store.refsCats().filter(c => c.name).map(c => `<option value="${UI.esc(c.name)}">`).join('')}</datalist></div>
           <div class="form-row"><label>类型</label>
             <select id="rType">${Object.entries(Refs.TY).map(([k, v]) => `<option value="${k}" ${d.type === k ? 'selected' : ''}>${v.l}</option>`).join('')}</select></div>
-          <div class="form-row"><label>期刊 / 会议 / 出版社</label>
-            <input id="rVenue" type="text" value="${UI.esc(d.venue)}" placeholder="NeurIPS"></div>
         </div>
+        <div class="form-row"><label>期刊 / 会议 / 出版社</label>
+          <input id="rVenue" type="text" value="${UI.esc(d.venue)}" placeholder="NeurIPS"></div>
         <div class="form-grid2">
           <div class="form-row"><label>DOI</label>
             <input id="rDoi" type="text" value="${UI.esc(d.doi)}" placeholder="10.xxxx/xxxxx"></div>
@@ -771,6 +786,9 @@ const UI = {
         <div class="brief-sec">
           <h4>解析结果 <span class="n">${imp.refs.length} 篇</span></h4>
           ${imp.warnings.length ? `<div class="warn-box">${imp.warnings.map(w => '· ' + UI.esc(w)).join('<br>')}</div>` : ''}
+          <div class="form-row" style="margin-top:12px"><label>导入到分类（可选，对本批全部生效）</label>
+            <input id="bibCat" type="text" list="bibCatList" placeholder="留空为未分类，例如：NLP">
+            <datalist id="bibCatList">${Store.refsCats().filter(c => c.name).map(c => `<option value="${UI.esc(c.name)}">`).join('')}</datalist></div>
           <div style="overflow:auto;max-height:380px;margin-top:10px">
           <table class="imp-table"><thead><tr>
             <th></th><th style="min-width:220px">标题</th><th style="min-width:160px">作者</th><th>年份</th><th>类型</th><th>状态</th>
@@ -876,5 +894,96 @@ const UI = {
         </div>
       </div>
     </div>`;
+  },
+
+  /* ============ 视图：AI 助手（DeepSeek 风格对话） ============ */
+  aiMsg(m, i, o = {}) {
+    if (m.role === 'user') {
+      return `<div class="ai-row user"><div class="ai-bubble">${UI.esc(m.content)}</div></div>`;
+    }
+    const thinking = o.streaming && !m.content;
+    const fish = typeof Pet !== 'undefined' ? Pet.logoHTML() : '⚡';
+    return `<div class="ai-row bot">
+      <div class="ai-avatar">${fish}</div>
+      <div class="ai-content">
+        ${m.reasoning ? `<details class="ai-think" ${thinking ? 'open' : ''}>
+          <summary>🧠 深度思考${thinking ? '中…' : '过程'}</summary>
+          <pre class="ai-think-body" id="aiThink-${i}">${UI.esc(m.reasoning)}</pre></details>` : ''}
+        <div class="ai-md md-preview" id="aiMd-${i}">${m.content ? MD.render(m.content) : (o.streaming ? '<span class="ai-caret"></span>' : '<span style="color:var(--muted)">…</span>')}</div>
+        ${o.showActs && m.content ? `<div class="ai-acts">
+          <button class="btn btn-ghost btn-sm" data-act="ai-copy" data-i="${i}">复制</button>
+          ${o.isLast ? `<button class="btn btn-ghost btn-sm" data-act="ai-regen">重新生成</button>` : ''}
+        </div>` : ''}
+      </div>
+    </div>`;
+  },
+
+  aiView() {
+    const st = App.state.ai;
+    const chats = (Store.db.chats || []).slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    const chat = st.cur ? Store.getChat(st.cur) : null;
+    const msgs = chat ? chat.messages : [];
+    const lastBot = (() => { for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].role === 'assistant') return i; return -1; })();
+    const fish = typeof Pet !== 'undefined' ? Pet.logoHTML() : '⚡';
+
+    return `
+    <div class="ai-wrap">
+      <div class="ai-head">
+        <select class="ai-chat-sel" data-act-change="ai-select" title="历史对话">
+          ${chats.length ? chats.map(c => `<option value="${c.id}" ${st.cur === c.id ? 'selected' : ''}>${UI.esc(c.title || '新对话')}</option>`).join('')
+            : '<option value="">新对话</option>'}
+        </select>
+        <button class="btn btn-ghost btn-sm" data-act="ai-new">＋ 新对话</button>
+        ${chat && msgs.length ? `<button class="btn btn-ghost btn-sm" data-act="ai-del" style="color:var(--red)">🗑 删除</button>` : ''}
+      </div>
+      <div class="ai-msgs" id="aiMsgs">
+        ${msgs.length ? msgs.map((m, i) => UI.aiMsg(m, i, { streaming: false, showActs: true, isLast: i === lastBot })).join('') : `
+        <div class="ai-welcome">
+          <div class="ai-wl-logo">${fish}</div>
+          <div class="ai-wl-title">有什么可以帮你？</div>
+          <div class="ai-wl-sub">小鲸已接入你的工作台数据 —— 总结与规划今日、本周、本月的任务，或随便聊点什么</div>
+          <div class="ai-quick">
+            ${AI.QUICK.map(q => `
+            <button class="ai-qcard" data-act="ai-quick" data-k="${q.k}">
+              <span class="ai-qicon">${q.icon}</span>
+              <span><b>${q.title}</b><i>${q.sub}</i></span>
+            </button>`).join('')}
+          </div>
+        </div>`}
+      </div>
+      <div class="ai-composer-wrap">
+        <div class="ai-composer">
+          <textarea id="aiInput" rows="1" placeholder="给小鲸发消息…（Enter 发送 · Shift+Enter 换行）"></textarea>
+          <div class="ai-composer-bar">
+            <button class="ai-model-chip" data-act="ai-config" title="更换模型 / API">🐋 ${UI.esc(AI.model())}<svg viewBox="0 0 24 24" class="mc-caret"><polyline points="6 9 12 15 18 9"/></svg></button>
+            <div style="flex:1"></div>
+            ${st.streaming
+              ? `<button class="ai-send stop" data-act="ai-stop" title="停止生成"><svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></svg></button>`
+              : `<button class="ai-send" data-act="ai-send" title="发送"><svg viewBox="0 0 24 24"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button>`}
+          </div>
+        </div>
+        <div class="ai-hint">⚠️ AI 生成内容仅供参考 · 对话随工作台数据云端同步 · 快捷指令会自动附带当前任务数据</div>
+      </div>
+    </div>`;
+  },
+
+  /* ---------- 文献分类管理弹窗 ---------- */
+  refCatManageModal() {
+    const cats = Store.refsCats();
+    UI.modal({
+      title: '📁 管理文献分类',
+      body: `
+        <div style="font-size:12.5px;color:var(--muted);line-height:1.7;margin-bottom:14px">
+          重命名会同步更新该分类下的所有文献；「未分类」改名可把全部未分类文献批量归入新分类；
+          删除分类后文献变为未分类（不会删除文献本身）。新建分类：编辑文献时在「分类」一栏填写即可。
+        </div>
+        ${cats.map(c => `
+        <div class="cat-mg-row">
+          <input type="text" value="${UI.esc(c.name)}" placeholder="${c.name === '' ? '（未分类）' : ''}" data-catinput="${UI.esc(c.name)}">
+          <span class="chip chip-gray">${c.count} 篇</span>
+          <button class="btn btn-ghost btn-sm" data-act="ref-cat-rename" data-old="${UI.esc(c.name)}">重命名</button>
+          ${c.name === '' ? '' : `<button class="btn btn-danger btn-sm" data-act="ref-cat-del" data-old="${UI.esc(c.name)}">删除</button>`}
+        </div>`).join('')}`
+    });
   }
 };

@@ -12,4 +12,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./assets:/app/assets
+    # AI 助手自定义接口白名单（默认已放行 DeepSeek/智谱等官方域名，无需配置）：
+    # environment:
+    #   - WB_AI_HOSTS=api.example.com,api2.example.com
     restart: unless-stopped

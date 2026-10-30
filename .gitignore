@@ -7,3 +7,6 @@ assets/
 
 node_modules/
 *.log
+
+# ZCode 本地工作目录
+.zcode/

@@ -2,7 +2,8 @@
 /* ============================================================
  * server-test.js — 服务器集成测试
  * 真实启动 server.js 子进程（临时目录隔离），覆盖：
- *   登录鉴权 / 站长与只读令牌分离 / 只读分享全流程 / 原图上传与静态服务 / 敏感路径拦截 / 限速
+ *   登录鉴权 / 站长与只读令牌分离 / 只读分享全流程 / 原图上传与静态服务 /
+ *   敏感路径拦截 / 限速 / AI 对话代理（白名单与流式直通）
  * 运行：node test/server-test.js
  * ============================================================ */
 'use strict';
@@ -38,7 +39,7 @@ function req(method, p, opts) {
         const buf = Buffer.concat(chunks);
         let json = null;
         try { json = JSON.parse(buf.toString()); } catch (e) {}
-        resolve({ status: res.statusCode, json, buf });
+        resolve({ status: res.statusCode, json, buf, headers: res.headers });
       });
     });
     r.on('error', reject);
@@ -55,7 +56,8 @@ async function main() {
       PORT: String(PORT),
       WORKBENCH_PASSWORD: OWNER_PW,
       WB_DATA_DIR: dataDir,
-      WB_ASSET_DIR: assetDir
+      WB_ASSET_DIR: assetDir,
+      WB_AI_HOSTS: '127.0.0.1'   /* AI 代理测试：放行本地伪上游 */
     }),
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -161,6 +163,50 @@ async function main() {
     for (let i = 0; i < 6; i++) await req('POST', '/api/login', { body: { password: 'bad-' + i } });
     r = await req('POST', '/api/login', { body: { password: OWNER_PW } });
     ok(r.status === 429, '连续 6 次错误后被锁定 → 429');
+
+    console.log('\n== AI 对话代理 ==');
+    /* 本地伪上游（SSE 流式 + 错误透传），域名经 WB_AI_HOSTS 放行 */
+    const UP_PORT = PORT + 2;
+    const upSrv = http.createServer((uq, ur) => {
+      if (uq.url === '/sse') {
+        ur.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        ur.write('data: {"choices":[{"delta":{"content":"你"}}]}\n\n');
+        setTimeout(() => {
+          ur.write('data: {"choices":[{"delta":{"content":"好"}}]}\n\n');
+          ur.end('data: [DONE]\n\n');
+        }, 60);
+      } else if (uq.url === '/boom') {
+        ur.writeHead(500, { 'Content-Type': 'application/json' });
+        ur.end('{"error":{"message":"upstream-boom"}}');
+      } else {
+        ur.writeHead(404); ur.end();
+      }
+    });
+    await new Promise(rs => upSrv.listen(UP_PORT, '127.0.0.1', rs));
+    try {
+      r = await req('POST', '/api/ai', { body: { url: 'http://127.0.0.1:' + UP_PORT + '/sse', key: 'k', data: { messages: [] } } });
+      ok(r.status === 401, '无令牌调用 AI 代理 → 401');
+      r = await req('POST', '/api/ai', { token: S, body: { url: 'http://127.0.0.1:' + UP_PORT + '/sse', key: 'k', data: { messages: [] } } });
+      ok(r.status === 401, '只读令牌调用 AI 代理 → 401（无写权限）');
+      r = await req('POST', '/api/ai', { token: T, body: { url: 'https://evil.example.com/v1/chat', key: 'k', data: { messages: [] } } });
+      ok(r.status === 400, '白名单外域名 → 400');
+      r = await req('POST', '/api/ai', { token: T, body: { url: 'http://127.0.0.1:' + UP_PORT + '/sse', data: { messages: [] } } });
+      ok(r.status === 400, '缺少 API Key → 400');
+      r = await req('POST', '/api/ai', { token: T, body: { url: 'http://127.0.0.1:' + UP_PORT + '/sse', key: 'k' } });
+      ok(r.status === 400, '缺少 messages → 400');
+      r = await req('POST', '/api/ai', {
+        token: T,
+        body: { url: 'http://127.0.0.1:' + UP_PORT + '/sse', key: 'test-key', data: { model: 'test', messages: [{ role: 'user', content: 'hi' }], stream: true } }
+      });
+      ok(r.status === 200, '代理转发 → 200');
+      ok((r.headers ? r.headers['content-type'] : '') === 'text/event-stream', '流式响应 content-type 透传');
+      const txt = r.buf ? r.buf.toString() : '';
+      ok(txt.includes('"content":"你"') && txt.includes('"content":"好"') && txt.includes('[DONE]'), 'SSE 数据块逐段直通（含 [DONE]）');
+      r = await req('POST', '/api/ai', { token: T, body: { url: 'http://127.0.0.1:' + UP_PORT + '/boom', key: 'k', data: { messages: [] } } });
+      ok(r.status === 500 && r.json && r.json.error && r.json.error.message === 'upstream-boom', '上游错误状态与内容透传（500 upstream-boom）');
+    } finally {
+      upSrv.close();
+    }
 
     console.log('\n== 改密码即时生效（无环境变量实例，不重启） ==');
     const PORT2 = PORT + 1, BASE2 = 'http://127.0.0.1:' + PORT2;

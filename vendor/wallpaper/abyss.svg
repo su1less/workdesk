@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+<!-- Abyss / 深海观景廊. Original vector artwork for this workspace, 2026.
+     No third-party artwork, fonts, filters or remote resources. -->
+<defs>
+  <linearGradient id="sea" x2=".85" y2="1"><stop stop-color="#070e1c"/><stop offset=".48" stop-color="#142a3e"/><stop offset="1" stop-color="#07131f"/></linearGradient>
+  <radialGradient id="light" cx=".79" cy=".14" r=".7"><stop stop-color="#477d91" stop-opacity=".55"/><stop offset=".54" stop-color="#1d4055" stop-opacity=".22"/><stop offset="1" stop-color="#07101e" stop-opacity="0"/></radialGradient>
+  <linearGradient id="beam" x2=".35" y2="1"><stop stop-color="#9bcbd2" stop-opacity=".13"/><stop offset="1" stop-color="#366274" stop-opacity="0"/></linearGradient>
+  <linearGradient id="floor" x2="0" y2="1"><stop stop-color="#0c1725"/><stop offset="1" stop-color="#060a12"/></linearGradient>
+  <linearGradient id="edge"><stop stop-color="#476474" stop-opacity="0"/><stop offset=".68" stop-color="#63818a" stop-opacity=".4"/><stop offset="1" stop-color="#476474" stop-opacity=".1"/></linearGradient>
+</defs>
+<path fill="url(#sea)" d="M0 0h1920v1080H0z"/>
+<path fill="url(#light)" d="M0 0h1920v1080H0z"/>
+<!-- Broad submerged shafts; composed rather than scattered particle effects. -->
+<path fill="url(#beam)" d="M1130 0h118l-350 865H540z"/>
+<path fill="url(#beam)" opacity=".65" d="M1420 0h68l-25 830h-192z"/>
+<path fill="url(#beam)" opacity=".45" d="M1595 0h52l270 790h-204z"/>
+<!-- Receding seabed. -->
+<path fill="#102233" opacity=".7" d="m480 754 179-68 129 32 133-87 119 20 201-100 145 53 167-28 167 64 200-29v469H480z"/>
+<path fill="#0b1a29" d="m400 861 289-62 188 19 182-79 191 28 158-83 135 32 172-29 205 76v317H400z"/>
+<!-- Architectural frame, deliberately quiet behind text. -->
+<path fill="#070d18" d="M0 0h1920v50H0zM0 0h217v1080H0z"/>
+<path fill="#0a1320" d="M294 0h20v927h-20zM936 0h13v910h-13zM1608 0h16v924h-16z"/>
+<path stroke="#4a6677" stroke-opacity=".19" fill="none" d="M315 50v847M950 50v840M1625 50v847"/>
+<path fill="url(#floor)" d="M0 913q960-90 1920 0v167H0z"/>
+<path stroke="url(#edge)" stroke-width="2" fill="none" d="M0 913q960-90 1920 0M0 939q960-85 1920 0"/>
+<path fill="none" stroke="#5a798a" stroke-opacity=".07" d="m970 888-320 192m520-190 110 190m-470-189-710 189m1300-185 520 185"/>
+<!-- A single distant whale silhouette gives the room a focal point. -->
+<path fill="#071722" opacity=".55" d="M1288 383c50-35 121-38 184-11 19 8 35 8 53 0l40-21-14 31 24 20-48-3c-23-1-37 6-61 18-60 26-116 15-150-7l-31 13 10-26-22-9z"/>
+<path fill="#9ac5cb" opacity=".08" d="M1290 383c55-36 121-35 183-9-65-18-124-18-183 9z"/>
+<!-- Left vignette keeps navigation readable without flattening the right view. -->
+<path fill="#040912" opacity=".26" d="M0 0h620v1080H0z"/>
+</svg>

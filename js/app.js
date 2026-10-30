@@ -11,16 +11,19 @@ const App = {
     week: U.weekStart(U.todayStr()),
     month: U.monthKey(U.todayStr()),
     lib: { q: '', level: '', status: '', tag: '' },
-    refs: { q: '', status: '', type: '', tag: '', sort: 'added' },
+    refs: { q: '', status: '', type: '', tag: '', sort: 'added', cat: '' },
     docs: { filter: 'all', mode: 'list', editing: null, tab: 'edit' },
     report: { type: 'week', anchor: U.todayStr(), md: null, tab: 'preview' },
-    import: null
+    import: null,
+    ai: { cur: null, streaming: false }
   },
 
   /* ---------- 启动 ---------- */
   init() {
     Store.load();
-    this.applyTheme();
+    try { this.state.ai.cur = localStorage.getItem('wb.ai.cur') || null; } catch (e) {}
+    this.applyAppearance();
+    if (typeof Boot !== 'undefined') Boot.play();
     this.bindEvents();
     /* 网页门禁（静态部署可在设置中开启）→ 通过后再展示界面 */
     Gate.init().then(() => {
@@ -41,6 +44,28 @@ const App = {
     if (lb) lb.textContent = th === 'dark' ? '浅色模式' : '深色模式';
   },
 
+  applyAppearance() {
+    this.applyTheme();
+    this.applyWallpaper();
+    if (typeof Pet !== 'undefined') Pet.refresh();
+  },
+
+  /* 背景壁纸（DSH 美化风）：动态场景 + 静态预设 + 自定义图片/视频 */
+  WALLPAPERS: [
+    { id: 'aqua', name: '深海观景', css: 'url(vendor/wallpaper/abyss.svg) center/cover' },
+    { id: 'starfield', name: '星河 🌠', css: 'linear-gradient(180deg,#050816,#101a3a 70%,#1a2440)' },
+    { id: 'aurora', name: '极光 🌌', css: 'linear-gradient(160deg,#0d0a2a,#101d4a 55%,#0a3346)' },
+    { id: 'rhine', name: '莱茵暗夜 ✨', css: 'linear-gradient(135deg,#15171c,#3a3220)' },
+    { id: 'sakura', name: '樱花 🌸', css: 'linear-gradient(150deg,#fff0f6,#fde7f1 45%,#e8eeff)' },
+    { id: 'default', name: '简洁 ⬜', css: 'linear-gradient(135deg,#f3f4f9,#e4e7f2)' }
+  ],
+
+  applyWallpaper() {
+    if (typeof Wallpaper !== 'undefined') return Wallpaper.apply();
+    const st = Store.db.settings;
+    document.body.dataset.wallpaper = st.wallpaper || 'aqua';
+  },
+
   /* ---------- 渲染 ---------- */
   render() {
     const s = this.state;
@@ -48,7 +73,8 @@ const App = {
       b.classList.toggle('active', b.dataset.nav === s.view));
     const map = {
       dashboard: UI.dashboard, today: UI.today, week: UI.week, month: UI.month,
-      library: UI.library, refs: UI.refsView, reports: UI.reports, docs: UI.docsView, import: UI.importView
+      library: UI.library, refs: UI.refsView, reports: UI.reports, docs: UI.docsView, import: UI.importView,
+      ai: UI.aiView
     };
     document.getElementById('view').innerHTML = map[s.view].call(UI);
     /* 文档编辑器：挂载块编辑器（点哪改哪 · 实时渲染 · 公式排版）；离开时冲刷保存 */
@@ -69,6 +95,7 @@ const App = {
       month: ['本月', s.month.replace('-', ' 年 ') + ' 月'],
       library: ['任务库', '全部任务的检索与管理'],
       refs: ['文献管理', '文献阅读追踪与 BibTeX 导入导出'],
+      ai: ['AI 助手', '接入 GLM / DeepSeek：总结、规划与建议（流式输出）'],
       docs: ['周报月报', 'Markdown 文档写作：支持图片、LaTeX 公式、代码块'],
       reports: ['进度报告', '周报 / 月报自动生成，支持导出 Markdown'],
       import: ['导入计划', '解析 Markdown 计划文档，一键生成任务与进度安排']
@@ -155,9 +182,20 @@ const App = {
       if (e.key === 'Enter') this.quickAdd(e.target);
     });
 
-    /* Esc 关闭弹窗 */
+    /* Esc 关闭弹窗；AI 输入框 Enter 发送 / Shift+Enter 换行 / 自动增高 */
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') UI.closeModal();
+      if (e.key === 'Enter' && !e.shiftKey && e.target && e.target.id === 'aiInput') {
+        e.preventDefault();
+        this.aiSend();
+      }
+    });
+    document.addEventListener('input', e => {
+      if (e.target && e.target.id === 'aiInput') {
+        const ta = e.target;
+        ta.style.height = 'auto';
+        ta.style.height = Math.min(ta.scrollHeight, 180) + 'px';
+      }
     });
 
     /* 导入文件拖拽 */
@@ -180,6 +218,7 @@ const App = {
   },
 
   handleChange(act, el) {
+    if (Store.readOnly && /^(set-|wallpaper-)/.test(act)) return;
     const s = this.state;
     switch (act) {
       case 'day-goto': if (el.value) { s.day = el.value; this.render(); } break;
@@ -190,6 +229,14 @@ const App = {
       case 'ref-type': s.refs.type = el.value; this.render(); break;
       case 'ref-tag': s.refs.tag = el.value; this.render(); break;
       case 'ref-sort': s.refs.sort = el.value; this.render(); break;
+      case 'ai-select':
+        s.ai.cur = el.value || null;
+        try {
+          if (s.ai.cur) localStorage.setItem('wb.ai.cur', s.ai.cur);
+          else localStorage.removeItem('wb.ai.cur');
+        } catch (e) {}
+        this.render();
+        break;
       case 'doc-type': this._docPatch({ type: el.value }); this.render(); break;
       case 'bib-file': {
         const f = el.files[0];
@@ -231,6 +278,53 @@ const App = {
         Store.save();
         break;
       }
+      case 'set-pet': {
+        Store.db.settings.pet = el.checked;
+        Store.save();
+        if (typeof Pet !== 'undefined') Pet.toggle(el.checked);
+        break;
+      }
+      case 'set-pet-skin': {
+        Store.db.settings.petSkin = el.dataset.v;
+        Store.db.settings.petImg = '';
+        Store.save();
+        if (typeof Pet !== 'undefined') Pet.refresh();
+        this.settingsModal();
+        break;
+      }
+      case 'set-pet-img': {
+        const iu = ((document.getElementById('petImgUrl') || {}).value || '').trim();
+        if (iu && !/^(https?:\/\/|data:image\/|assets\/)/.test(iu)) {
+          UI.toast('图片地址需以 http(s):// 、data:image/ 或 assets/ 开头', 'warn');
+          break;
+        }
+        Store.db.settings.petImg = iu;
+        Store.save();
+        if (typeof Pet !== 'undefined') Pet.refresh();
+        this.settingsModal();
+        UI.toast(iu ? '🐳 桌宠形象已更换' : '已恢复内置形象');
+        break;
+      }
+      case 'wallpaper-options': {
+        const st = Store.db.settings;
+        const motion = document.getElementById('wpMotion');
+        const dim = document.getElementById('wpDim');
+        const type = document.getElementById('wpType');
+        if (motion) st.wallpaperMotion = motion.checked;
+        if (dim) st.wallpaperDim = +dim.value / 100;
+        if (type) st.wallpaperMediaType = type.value;
+        const label = document.getElementById('wpDimVal');
+        if (label && dim) label.textContent = dim.value + '%';
+        Store.save(); this.applyWallpaper();
+        break;
+      }
+      case 'set-boot': {
+        Store.db.settings.boot = el.checked;
+        if (!el.checked) { try { sessionStorage.setItem('wb.boot', '1'); } catch (e) {} }
+        else { try { sessionStorage.removeItem('wb.boot'); } catch (e) {} }
+        Store.save();
+        break;
+      }
     }
   },
 
@@ -254,6 +348,7 @@ const App = {
             <button data-act="go" data-v="refs"><span class="mi-icon">📚</span>文献管理</button>
             <button data-act="go" data-v="reports"><span class="mi-icon">📄</span>进度报告</button>
             <button data-act="go" data-v="docs"><span class="mi-icon">📝</span>周报月报</button>
+            <button data-act="go" data-v="ai"><span class="mi-icon">🤖</span>AI 助手</button>
             <button data-act="go" data-v="import"><span class="mi-icon">📥</span>导入计划</button>
             <button data-act="open-settings"><span class="mi-icon">⚙️</span>设置</button>
             <button data-act="toggle-theme"><span class="mi-icon">🌙</span>深色 / 浅色切换</button>
@@ -431,6 +526,8 @@ const App = {
       case 'bib-do': {
         const imp = Refs._imp;
         if (!imp) break;
+        const bibCatEl = document.getElementById('bibCat');
+        const bibCat = bibCatEl ? bibCatEl.value.trim() : '';
         let n = 0;
         document.querySelectorAll('#modalRoot .imp-ck:checked').forEach(ck => {
           const i = +ck.dataset.i;
@@ -439,6 +536,7 @@ const App = {
             if (inp.dataset.f === 'year') patch.year = +inp.value || null;
             else patch[inp.dataset.f] = inp.value;
           });
+          patch.cat = bibCat;
           if (!patch.title || !patch.title.trim()) return;
           Store.addRef(patch); n++;
         });
@@ -513,6 +611,112 @@ const App = {
         UI.toast('已存为可编辑文档，可在此基础上补充图片与公式');
         s.docs.mode = 'list';
         this.go('docs');
+        break;
+      }
+
+      /* --- AI 助手 --- */
+      case 'ai-new': {
+        const c = Store.addChat();
+        s.ai.cur = c.id;
+        try { localStorage.setItem('wb.ai.cur', c.id); } catch (e) {}
+        this.render();
+        const inp = document.getElementById('aiInput');
+        if (inp) inp.focus();
+        break;
+      }
+      case 'ai-del': {
+        UI.confirm('删除整个对话？聊天记录无法恢复。', { danger: true, okText: '删除' }).then(ok => {
+          if (ok) {
+            Store.deleteChat(s.ai.cur);
+            s.ai.cur = null;
+            try { localStorage.removeItem('wb.ai.cur'); } catch (e) {}
+            UI.toast('对话已删除');
+            this.render();
+          }
+        });
+        break;
+      }
+      case 'ai-config': AI.settingsModal(); break;
+      case 'ai-save': AI.saveSettings(); break;
+      case 'ai-clear': AI.clearSettings(); break;
+      case 'ai-toggle-adv': {
+        const adv = document.getElementById('aiAdv');
+        if (adv) adv.style.display = adv.style.display === 'none' ? '' : 'none';
+        break;
+      }
+      case 'ai-send': this.aiSend(); break;
+      case 'ai-stop': AI.stop(); break;
+      case 'ai-quick': {
+        const q = AI.QUICK.find(x => x.k === el.dataset.k);
+        if (!q) break;
+        this._aiScope = q.scope;
+        this.aiSend(q.prompt);
+        break;
+      }
+      case 'ai-copy': {
+        const chat = Store.getChat(s.ai.cur);
+        const m = chat && chat.messages[+el.dataset.i];
+        if (m && m.content) this.copyText(m.content).then(() => UI.toast('已复制到剪贴板'));
+        break;
+      }
+      case 'ai-regen': {
+        const chat = Store.getChat(s.ai.cur);
+        if (!chat || s.ai.streaming) break;
+        while (chat.messages.length && chat.messages[chat.messages.length - 1].role === 'assistant') chat.messages.pop();
+        if (!chat.messages.length) { UI.toast('没有可重新生成的内容', 'warn'); break; }
+        Store.save();
+        this.aiRun(chat);
+        break;
+      }
+
+      /* --- 文献分类 --- */
+      case 'ref-cat': s.refs.cat = el.dataset.v || ''; this.render(); break;
+      case 'ref-cat-manage': UI.refCatManageModal(); break;
+      case 'ref-cat-rename': {
+        const oldName = el.dataset.old || '';
+        const inp = document.querySelector(`[data-catinput="${oldName.replace(/"/g, '\\"')}"]`);
+        const newName = inp ? inp.value.trim() : '';
+        if ((oldName || '') === newName) { UI.toast('名称未变化', 'warn'); break; }
+        if (!newName) { UI.toast('分类名不能为空（删除分类请用删除按钮）', 'warn'); break; }
+        const n = Store.renameRefCat(oldName, newName);
+        UI.toast('已把 ' + n + ' 篇文献移入「' + newName + '」');
+        if (s.refs.cat === oldName) s.refs.cat = newName;
+        this.render();
+        UI.refCatManageModal();
+        break;
+      }
+      case 'ref-cat-del': {
+        const oldName = el.dataset.old || '';
+        UI.confirm('删除分类「' + UI.esc(oldName) + '」？该分类下的 ' + (Store.refsCats().find(c => c.name === oldName) || {}).count + ' 篇文献将变为未分类（文献本身不受影响）。', { danger: true, okText: '删除分类' }).then(ok => {
+          if (!ok) return;
+          const n = Store.renameRefCat(oldName, '');
+          UI.toast('已删除分类，' + n + ' 篇文献移入未分类');
+          if (s.refs.cat === oldName) s.refs.cat = '';
+          this.render();
+          UI.refCatManageModal();
+        });
+        break;
+      }
+
+      /* --- 背景壁纸与桌宠 --- */
+      case 'set-pet-skin':
+      case 'set-pet-img': this.handleChange(act, el); break;
+      case 'set-wallpaper': {
+        Store.db.settings.wallpaper = el.dataset.v;
+        Store.save();
+        this.applyWallpaper();
+        this.settingsModal();
+        break;
+      }
+      case 'set-wallpaper-custom': {
+        const u = ((document.getElementById('wpUrl') || {}).value || '').trim();
+        if (u && !/^https?:\/\//.test(u)) { UI.toast('媒体地址需以 http(s):// 开头', 'warn'); break; }
+        Store.db.settings.wallpaperUrl = u;
+        Store.db.settings.wallpaper = u ? 'custom' : 'aqua';
+        Store.save();
+        this.applyWallpaper();
+        this.settingsModal();
+        UI.toast(u ? '🖼 壁纸已更换' : '已清除自定义壁纸');
         break;
       }
 
@@ -603,11 +807,13 @@ const App = {
   RO_BLOCK: new Set([
     'toggle-task', 'carry-over', 't-save', 't-delete', 'brief-carry',
     'sud-submit', 'adj-apply', 'adj-only', 'imp-do',
-    'ref-save', 'ref-delete', 'ref-cycle', 'ref-task', 'bib-do',
+    'ref-save', 'ref-delete', 'ref-cycle', 'ref-task', 'bib-do', 'ref-cat-rename', 'ref-cat-del',
     'gate-save', 'gate-clear', 'share-save', 'share-clear',
     'gh-save', 'gh-disconnect', 'sync-logout',
     'set-import', 'set-demo', 'set-clear', 'add-task-on', 'add-task-new', 'add-week-task', 'add-month-task',
-    'doc-new', 'doc-del', 'rep-todoc'
+    'doc-new', 'doc-del', 'rep-todoc',
+    'ai-new', 'ai-del', 'ai-send', 'ai-quick', 'ai-save', 'ai-clear', 'ai-regen',
+    'set-wallpaper', 'set-wallpaper-custom', 'set-pet-skin', 'set-pet-img'
   ]),
 
   /* ---------- 快速添加 ---------- */
@@ -630,6 +836,93 @@ const App = {
     input.value = '';
     UI.toast('已添加：' + p.title + (p.date ? '（' + U.fmtCN(p.date) + (p.start ? ' ' + p.start : '') + '）' : ''));
     this.render();
+  },
+
+  /* ---------- AI 助手 ---------- */
+  aiCur() {
+    if (this.state.ai.cur && !Store.getChat(this.state.ai.cur)) this.state.ai.cur = null;
+    return this.state.ai.cur;
+  },
+
+  /* 发送一条用户消息并请求 AI（text 为空时取输入框内容） */
+  async aiSend(text) {
+    if (Store.readOnly) { UI.toast('🔗 访客只读模式：仅可查看', 'warn'); return; }
+    const input = document.getElementById('aiInput');
+    const msg = (text != null ? text : (input && input.value) || '').trim();
+    if (!msg || this.state.ai.streaming) return;
+    if (!AI.cfg()) { AI.settingsModal('请先配置 AI 接口（支持智谱 GLM / DeepSeek，填 API Key 即可用）'); return; }
+    if (input) { input.value = ''; input.style.height = 'auto'; }
+
+    let chat = this.aiCur() ? Store.getChat(this.aiCur()) : null;
+    if (!chat) {
+      chat = Store.addChat();
+      this.state.ai.cur = chat.id;
+      try { localStorage.setItem('wb.ai.cur', chat.id); } catch (e) {}
+    }
+    chat.title = chat.messages.length ? chat.title : (msg.replace(/\s+/g, ' ').slice(0, 24) || '新对话');
+    chat.messages.push({ role: 'user', content: msg, ts: Date.now() });
+    Store.save();
+    this.render();
+    this.aiScroll(true);
+    this._aiScope = this._aiScope || 'auto';
+    this.aiRun(chat, this._aiScope);
+    this._aiScope = null;
+  },
+
+  /* 基于对话历史请求 AI，流式写回最后一条 assistant 消息 */
+  async aiRun(chat, scope) {
+    const idx = chat.messages.length;
+    chat.messages.push({ role: 'assistant', content: '', ts: Date.now() });
+    this.state.ai.streaming = true;
+    this.render();
+    this.aiScroll(true);
+
+    const sys = AI.system() + '\n\n以下是用户工作台的当前数据（' + U.todayStr() + '），供参考：\n\n' + AI.buildContext(scope || 'auto');
+    const hist = chat.messages.filter(m => m.content).slice(-20).map(m => ({ role: m.role, content: m.content }));
+    let throttle = 0;
+
+    try {
+      const r = await AI.chat([{ role: 'system', content: sys }, ...hist], (content, reasoning) => {
+        const now = Date.now();
+        if (now - throttle < 90) return;
+        throttle = now;
+        chat.messages[idx].content = content;
+        chat.messages[idx].reasoning = reasoning;
+        this.aiPatch(idx, true);
+      });
+      chat.messages[idx].content = r.content;
+      if (r.reasoning) chat.messages[idx].reasoning = r.reasoning;
+    } catch (e) {
+      if (e.name === 'AbortError') {
+        chat.messages[idx].content = chat.messages[idx].content || '_（已停止生成）_';
+      } else {
+        chat.messages[idx].content = '⚠️ **请求失败**：' + e.message;
+        UI.toast('AI 请求失败：' + e.message, 'err');
+      }
+    } finally {
+      this.state.ai.streaming = false;
+      chat.updatedAt = Date.now();
+      Store.save();
+      this.render();
+      this.aiScroll();
+    }
+  },
+
+  /* 流式期间直接更新 DOM（不整页重渲染，保持滚动位置与输入状态） */
+  aiPatch(i, streaming) {
+    const m = (Store.getChat(this.aiCur()) || { messages: [] }).messages[i];
+    if (!m) return;
+    const md = document.getElementById('aiMd-' + i);
+    if (md) md.innerHTML = MD.render(m.content || '') + (streaming ? '<span class="ai-caret"></span>' : '');
+    const th = document.getElementById('aiThink-' + i);
+    if (th && m.reasoning != null) th.textContent = m.reasoning;
+    this.aiScroll();
+  },
+
+  aiScroll(force) {
+    const box = document.getElementById('aiMsgs');
+    if (!box) return;
+    if (force || box.scrollHeight - box.scrollTop - box.clientHeight < 160) box.scrollTop = box.scrollHeight;
   },
 
   /* ---------- 任务编辑弹窗 ---------- */
@@ -737,6 +1030,7 @@ const App = {
       authors: g('rAuthors'),
       year: +g('rYear') || null,
       type: document.getElementById('rType').value,
+      cat: g('rCat'),
       venue: g('rVenue'),
       doi: g('rDoi'),
       url: g('rUrl'),
@@ -1036,8 +1330,42 @@ const App = {
             <span style="color:var(--muted)">至</span>
             <input id="wEnd" type="time" value="${st.workingEnd}" data-act-change="set-hours">
           </div></div>
-        <div class="form-row"><label>外观</label>
-          <div style="font-size:12.5px;color:var(--muted)">使用左侧栏底部的月亮/太阳按钮切换深浅色主题（当前：${st.theme === 'dark' ? '深色' : '浅色'}）。</div></div>
+        <div class="form-row"><label>外观 · 主题切换用左侧栏底部按钮（当前：${st.theme === 'dark' ? '深色' : '浅色'}）</label>
+          <div class="wp-picker">
+            ${this.WALLPAPERS.map(w => `
+            <button type="button" class="wp-swatch ${st.wallpaper === w.id || (!st.wallpaper && w.id === 'aqua') ? 'on' : ''}" data-act="set-wallpaper" data-v="${w.id}" title="${w.name}">
+              <span style="background:${w.css}"></span><i>${w.name}</i>
+            </button>`).join('')}
+          </div>
+          <div class="media-controls">
+            <input id="wpUrl" type="text" value="${UI.esc(st.wallpaperUrl || '')}" placeholder="图片或视频 URL（https://…）">
+            <select id="wpType" data-act-change="wallpaper-options"><option value="auto" ${st.wallpaperMediaType === 'auto' ? 'selected' : ''}>自动识别</option><option value="image" ${st.wallpaperMediaType === 'image' ? 'selected' : ''}>图片</option><option value="video" ${st.wallpaperMediaType === 'video' ? 'selected' : ''}>视频</option></select>
+            <button class="btn btn-ghost btn-sm" data-act="set-wallpaper-custom">应用媒体</button>
+          </div>
+          <div class="setting-inline"><label for="wpDim">背景压暗</label><input id="wpDim" type="range" min="0" max="75" value="${Math.round((st.wallpaperDim == null ? .18 : st.wallpaperDim) * 100)}" data-act-change="wallpaper-options"><span id="wpDimVal">${Math.round((st.wallpaperDim == null ? .18 : st.wallpaperDim) * 100)}%</span><label class="switch"><input id="wpMotion" type="checkbox" data-act-change="wallpaper-options" ${st.wallpaperMotion !== false ? 'checked' : ''}><span class="track"></span></label><span>动态</span></div>
+          <div class="appearance-note">动态背景在切到后台时暂停；系统开启减少动态效果时同样暂停。压暗背景可提高文字可读性。</div></div>
+        <div class="form-row"><label>桌宠 · 官方 dsh-pet 形象与动作（左键互动 · 按住拖动 · 右键选择动作）</label>
+          <div class="wp-picker">
+            <button type="button" class="wp-swatch ${(st.petSkin || 'mascot') === 'mascot' && !st.petImg ? 'on' : ''}" data-act="set-pet-skin" data-v="mascot" title="官方蓝辫鲸鱼娘，全套原画动作">
+              <span style="background:url(vendor/pet/mascot.png?v=20261030-pet7) center top/cover no-repeat"></span><i>鲸鱼娘 · 动画</i>
+            </button>
+            <button type="button" class="wp-swatch ${st.petSkin === 'whale' && !st.petImg ? 'on' : ''}" data-act="set-pet-skin" data-v="whale" title="经典肥鲸 SVG（静态）">
+              <span style="background:linear-gradient(180deg,#8fc7f2,#5b9bd8)"></span><i>经典肥鲸</i>
+            </button>
+          </div>
+          <div class="appearance-note">形象与动作来自官方 dsh-pet。左键点击互动、按住拖动（悬空反馈）、右键选择动作（挥手/跳舞/发呆/睡觉等）；长时间不理会会自己打哈欠入睡。</div>
+          <div style="display:flex;gap:8px;margin-top:9px">
+            <input id="petImgUrl" type="text" value="${UI.esc(st.petImg || '')}" placeholder="自定义形象图片 URL（填了优先于上面几款）" style="flex:1">
+            <button class="btn btn-ghost btn-sm" data-act="set-pet-img">应用</button>
+          </div></div>
+        <div class="form-row"><div class="switch-row">
+          <span class="sr-label">桌宠开关（点击互动 · 按住拖动 · 右键选动作）</span>
+          <label class="switch"><input type="checkbox" data-act-change="set-pet" ${st.pet !== false ? 'checked' : ''}><span class="track"></span></label>
+        </div></div>
+        <div class="form-row"><div class="switch-row">
+          <span class="sr-label">⚡ 启动动画（每次打开浏览器会话播放一次，点击可跳过）</span>
+          <label class="switch"><input type="checkbox" data-act-change="set-boot" ${st.boot !== false ? 'checked' : ''}><span class="track"></span></label>
+        </div></div>
         ${Sync.mode === 'server' ? `<div class="form-row"><label>☁ 云端同步 · 自建服务器（已启用）</label>
           <div style="font-size:12.5px;color:var(--muted);margin-bottom:9px;line-height:1.7">
             数据实时保存到服务器，多设备登录后看到同一份数据；清浏览器缓存不影响数据。备份可直接复制 <code>data/db.json</code>。

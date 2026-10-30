@@ -13,6 +13,7 @@ load('store.js', ['U', 'Store']);
 load('scheduler.js', ['Scheduler']);
 load('md.js', ['MD']);
 load('refs.js', ['Refs']);
+load('ai.js', ['AI']);
 load('sync.js', ['Sync']);
 load('gate.js', ['Gate']);
 load('blocks.js', ['Blocks']);
@@ -302,6 +303,111 @@ t('b64 大文本往返（分块）', Sync.b64decode(Sync.b64encode(big)) === big
   t('updateDoc', Store.getDoc(doc1.id).content === '# changed');
   Store.deleteDoc(doc1.id);
   t('deleteDoc', !Store.getDoc(doc1.id));
+
+  /* ---------- 7. AI 助手（上下文 / 快捷指令 / 对话存储 / 默认接口） ---------- */
+  console.log('== AI ==');
+  t('服务商：DeepSeek 官方接口', AI.PROVIDERS.deepseek.url === 'https://api.deepseek.com/chat/completions');
+  t('服务商：智谱 GLM 官方接口', AI.PROVIDERS.glm.url === 'https://open.bigmodel.cn/api/paas/v4/chat/completions');
+  t('GLM flash 系列模型列表（默认 glm-5.3-flash）', AI.PROVIDERS.glm.models[0] === 'glm-5.3-flash'
+    && AI.PROVIDERS.glm.def === 'glm-5.3-flash'
+    && AI.PROVIDERS.glm.models.includes('glm-5.3-flashx')
+    && AI.PROVIDERS.glm.models.includes('glm-4.7-flash')
+    && AI.PROVIDERS.glm.models.every(m => m.includes('flash')));
+  t('快捷指令 6 条（日/周/月 × 总结/规划）', AI.QUICK.length === 6
+    && ['day', 'week', 'month'].every(s => AI.QUICK.some(q => q.scope === s))
+    && AI.QUICK.every(q => q.prompt && q.title));
+  t('未配置时回退内置默认 GLM 接口', (() => {
+    localStorage.removeItem('wb.ai');
+    const c = AI.cfg();
+    return c.provider === 'glm' && c.key === AI.DEFAULT_CFG.key
+      && c.model === 'glm-5.3-flash' && AI.isDefault() === true;
+  })());
+  t('只存模型时静默沿用内置 Key（页面无需显示 Key）', (() => {
+    localStorage.setItem('wb.ai', JSON.stringify({ model: 'glm-4.7-flash' }));
+    const c = AI.cfg();
+    return c.key === AI.DEFAULT_CFG.key && c.model === 'glm-4.7-flash' && AI.isDefault() === true;
+  })());
+  t('savedCfg 永不含内置 Key（页面回显安全）', (() => {
+    localStorage.removeItem('wb.ai');
+    return !('key' in AI.savedCfg()) && Object.keys(AI.savedCfg()).length === 0;
+  })());
+  localStorage.setItem('wb.ai', JSON.stringify({ provider: 'deepseek', key: 'sk-test', model: 'deepseek-chat' }));
+  t('配置读取 + 模型标签', AI.cfg() && AI.model() === 'deepseek-chat' && !AI.isDefault());
+  t('自定义服务商取自定义地址', (() => {
+    localStorage.setItem('wb.ai', JSON.stringify({ provider: 'custom', key: 'k', url: 'https://api.example.com/v1/chat/completions', model: 'm1' }));
+    return AI.ep() === 'https://api.example.com/v1/chat/completions' && AI.model() === 'm1';
+  })());
+  localStorage.removeItem('wb.ai');
+
+  Store.db.tasks = [];
+  const T0 = U.todayStr();
+  Store.addTask({ title: '今天要写的报告', status: 'doing', progress: 40, priority: 'high', start: '10:00', end: '11:00' });
+  Store.addTask({ title: '已完成的站会', status: 'done', progress: 100 });
+  const ctxDay = AI.buildContext('day');
+  t('day 上下文含今日任务标题', ctxDay.includes('今日') && ctxDay.includes('今天要写的报告'));
+  t('day 上下文含状态与进度', ctxDay.includes('进行中 40%') && ctxDay.includes('已完成'));
+  Store.db.tasks = [];
+  const ws0 = U.weekStart(T0);
+  Store.addTask({ title: '本周重点任务X', level: 'week', date: ws0, progress: 30, status: 'doing' });
+  const ctxWeek = AI.buildContext('week');
+  t('week 上下文含周任务与七天明细标题', ctxWeek.includes('本周重点任务X') && ctxWeek.includes('【本周'));
+  const mk0 = U.monthKey(T0);
+  Store.addTask({ title: '本月目标Y', level: 'month', date: mk0 + '-01' });
+  t('month 上下文含月目标', AI.buildContext('month').includes('本月目标Y'));
+  t('auto 上下文同时含周与月', AI.buildContext('auto').includes('【本周') && AI.buildContext('auto').includes('【本月'));
+  t('系统提示词含中文要求', AI.system().includes('简体中文') && AI.system().includes('Markdown'));
+
+  /* 对话存储 CRUD */
+  Store.db.chats = [];
+  const chatA = Store.addChat();
+  t('addChat 默认字段', chatA.title === '新对话' && Array.isArray(chatA.messages) && !!chatA.id);
+  t('getChat', Store.getChat(chatA.id) === chatA);
+  Store.deleteChat(chatA.id);
+  t('deleteChat', !Store.getChat(chatA.id));
+  t('_normalize 归一化 chats', (Store.db.chats = null, Store._normalize(), Array.isArray(Store.db.chats) && Store.db.chats.length === 0));
+
+  /* ---------- 8. 壁纸与桌宠设置 ---------- */
+  console.log('== Wallpaper & Pet ==');
+  t('_normalize 默认壁纸为深海 aqua', (() => {
+    Store.db.settings = { workingStart: '07:00', workingEnd: '23:00', theme: 'light' };
+    Store._normalize();
+    return Store.db.settings.wallpaper === 'aqua';
+  })());
+  t('_normalize 默认开启桌宠', (() => {
+    Store.db.settings = { theme: 'light' };
+    Store._normalize();
+    return Store.db.settings.pet === true;
+  })());
+  t('_normalize 默认桌宠形象为官方立绘', (() => {
+    Store.db.settings = { theme: 'light' };
+    Store._normalize();
+    return Store.db.settings.petSkin === 'mascot' && Store.db.settings.petImg === '';
+  })());
+
+  /* ---------- 9. 文献分类 ---------- */
+  console.log('== Refs cat ==');
+  Store.db.refs = [];
+  const rc1 = Store.addRef({ title: '论文A', cat: 'NLP' });
+  const rc2 = Store.addRef({ title: '论文B', cat: 'NLP' });
+  const rc3 = Store.addRef({ title: '书C', cat: '' });
+  const rc4 = Store.addRef({ title: '论文D' });   /* 无 cat 字段 → 未分类 */
+  t('refsCats 统计与排序（未分类在末尾）', (() => {
+    const cats = Store.refsCats();
+    return cats[0].name === 'NLP' && cats[0].count === 2
+      && cats[cats.length - 1].name === '' && cats[cats.length - 1].count === 2;
+  })());
+  t('addRef 默认 cat 为空串', rc4.cat === '' && rc3.cat === '');
+  t('renameRefCat 重命名传播', Store.renameRefCat('NLP', '自然语言处理') === 2
+    && Store.getRef(rc1.id).cat === '自然语言处理' && Store.getRef(rc2.id).cat === '自然语言处理');
+  t('renameRefCat 空改有（未分类批量归类）', Store.renameRefCat('', '教材') === 2
+    && Store.getRef(rc3.id).cat === '教材' && Store.getRef(rc4.id).cat === '教材');
+  t('renameRefCat 删除分类归未分类', Store.renameRefCat('教材', '') === 2 && Store.getRef(rc3.id).cat === '');
+  t('renameRefCat 不存在的分类返回 0', Store.renameRefCat('不存在', 'x') === 0);
+  t('_normalize 补齐旧数据缺失的 cat', (() => {
+    Store.db.refs = [{ id: 'x1', title: '旧数据文献' }];
+    Store._normalize();
+    return Store.db.refs[0].cat === '' && Array.isArray(Store.db.refs[0].tags);
+  })());
   finish();
 })();
 

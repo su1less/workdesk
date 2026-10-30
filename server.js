@@ -10,6 +10,7 @@
  * 功能：静态文件托管 + 单密码登录 + 数据云端存储（data/db.json）
  *       + 只读分享（网址+分享密码给老师只读查看，数据实时刷新）
  *       + 文档原图存储（assets/ 单独文件，不压缩、不进数据文件）
+ *       + AI 对话代理（/api/ai 流式转发 GLM / DeepSeek 等，域名白名单）
  * 安全：密码 scrypt 哈希存储、HMAC 签名令牌（30 天，站长/只读分离）、
  *       登录与分享验证限速、data/ 禁止外部访问、请求体上限 32MB。
  * 提示：公网部署请务必套 HTTPS（推荐 Caddy 或 Nginx 反向代理）。
@@ -17,6 +18,7 @@
 'use strict';
 
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -296,6 +298,70 @@ async function handleAPI(req, res, u) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
     return sendJSON(res, 200, { ok: true, enabled: body.enabled });
+  }
+
+  /* ===== AI 接口代理（站长；浏览器 → 服务器 → 模型服务商，规避跨域并隐藏直连问题） =====
+ * 上游仅放行 https 白名单域名（默认 DeepSeek / 智谱等主流服务商），
+ * 环境变量 WB_AI_HOSTS 可追加自定义 OpenAI 兼容接口域名（额外允许 http 以便内网调试）。 */
+const AI_HOSTS = ['api.deepseek.com', 'open.bigmodel.cn', 'api.openai.com', 'api.moonshot.cn',
+  'dashscope.aliyuncs.com', 'api.siliconflow.cn'];
+function aiUpstream(u) {
+  try {
+    const p = new URL(String(u));
+    const extra = (process.env.WB_AI_HOSTS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    const host = p.hostname.toLowerCase();
+    if (!AI_HOSTS.includes(host) && !extra.includes(host)) return null;
+    if (p.protocol !== 'https:' && !(p.protocol === 'http:' && extra.includes(host))) return null;
+    return p;
+  } catch (e) { return null; }
+}
+
+async function handleAIProxy(req, res, body) {
+  const url = aiUpstream(body && body.url);
+  if (!url) return sendJSON(res, 400, { error: 'AI 接口地址不在允许列表（默认放行 DeepSeek/智谱等官方域名，自定义域名请在服务器环境变量 WB_AI_HOSTS 中添加）' });
+  if (!body || typeof body.key !== 'string' || !body.key || body.key.length > 512) return sendJSON(res, 400, { error: '缺少 API Key' });
+  if (!body.data || !Array.isArray(body.data.messages)) return sendJSON(res, 400, { error: '请求参数不正确' });
+  const payload = Buffer.from(JSON.stringify(body.data));
+  await new Promise(done => {
+    const mod = url.protocol === 'http:' ? http : https;
+    const up = mod.request(url, {
+      method: 'POST',
+      timeout: 300000,
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': payload.length,
+        'Authorization': 'Bearer ' + body.key,
+        'Accept': 'text/event-stream, application/json'
+      }
+    }, ur => {
+      /* 流式直通：SSE 逐块转发，不做缓冲 */
+      res.writeHead(ur.statusCode || 502, {
+        'Content-Type': ur.headers['content-type'] || 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'X-Accel-Buffering': 'no'
+      });
+      ur.pipe(res);
+      ur.on('end', done);
+      ur.on('error', () => { try { res.end(); } catch (e) {} done(); });
+    });
+    up.on('timeout', () => up.destroy(new Error('上游超时（300 秒无响应）')));
+    up.on('error', e => {
+      if (!res.headersSent) sendJSON(res, 502, { error: 'AI 服务连接失败：' + e.message });
+      else { try { res.end(); } catch (e2) {} }
+      done();
+    });
+    res.on('close', () => { up.destroy(); done(); });   /* 客户端中断 → 停止上游请求 */
+    up.end(payload);
+  });
+}
+
+  /* ===== AI 对话代理（站长令牌专用，只读访客不可用） ===== */
+
+  if (ep === 'ai' && req.method === 'POST') {
+    if (!authed(req)) return sendJSON(res, 401, { error: '未登录' });
+    let body;
+    try { body = await readBody(req); } catch (e) { return sendJSON(res, 400, { error: '请求格式错误' }); }
+    return await handleAIProxy(req, res, body);
   }
 
   /* ===== 文档原图上传（站长；单独存 assets/，不进数据文件） ===== */
