@@ -195,7 +195,9 @@ const MD = {
         if (wn && ctx.weekAnchor && ctx.weekBase != null && task.level === 'day') {
           const idx = +wn - ctx.weekBase;
           if (idx >= 0 && idx * 7 <= (U.parseDate(ctx.range[1]) - U.parseDate(ctx.weekAnchor)) / 86400000) {
-            task.date = U.addDays(ctx.weekAnchor, idx * 7);
+            /* "W2 Sentaurus 入门" 这类周编号条目 = 每周做什么 → 周任务，落在该周周一 */
+            task.level = 'week';
+            task.date = U.weekStart(U.addDays(ctx.weekAnchor, idx * 7));
             delete task._pendingRange;
           }
         }
@@ -242,6 +244,8 @@ const MD = {
   /* 标题 → 解析上下文（日期 / 类型 / 区间 / 分组标签） */
   _headingCtx(txt, prev, today) {
     const ctx = { level: prev.level, date: prev.date, tag: prev.tag, range: null, baseIndent: 0 };
+    /* 剥离开头章节号（"3.3 分周计划"的 3.3 不是 3 月 3 日） */
+    txt = txt.replace(/^\d{1,2}\s*[.、]\s*\d{1,2}\s+/, '');
     /* 抽取标题中的所有日期 */
     const ds = [];
     const re = /(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})|(?<![\d.])(\d{1,2}[-/.]\d{1,2})(?![\d.])/g;
@@ -314,15 +318,17 @@ const MD = {
     const head = cells(rows[0]);
     const keyIdx = {};
     head.forEach((h, i) => {
-      if (/任务|事项|待办|标题/.test(h)) keyIdx.title = i;
+      if (/任务|事项|待办|标题|里程碑/.test(h)) keyIdx.title = i;
       else if (/日期|时间|日程|安排/.test(h)) keyIdx.when = i;
       else if (/优先/.test(h)) keyIdx.pri = i;
       else if (/进度|完成/.test(h)) keyIdx.prog = i;
       else if (/状态/.test(h)) keyIdx.status = i;
-      else if (/备注|说明|描述/.test(h)) keyIdx.note = i;
+      else if (/备注|说明|描述|判定|标准/.test(h)) keyIdx.note = i;
       else if (/类型|级别|周期/.test(h)) keyIdx.level = i;
     });
     if (keyIdx.title === undefined) return;
+    /* 里程碑表：阶段验收目标 → 月任务 */
+    const isMilestone = /里程碑/.test(head[keyIdx.title] || '');
     rows.slice(1).forEach(r => {
       if (/^[\s|:-]+$/.test(r)) return;
       const c = cells(r);
@@ -331,7 +337,7 @@ const MD = {
       const p = MD.inline(title, ctx);
       const task = {
         title: p.title || title,
-        level: p.level || ctx.level, date: p.date || ctx.date,
+        level: isMilestone ? 'month' : (p.level || ctx.level), date: p.date || ctx.date,
         start: p.start, end: p.end, priority: p.priority || 'mid',
         progress: p.progress >= 0 ? p.progress : 0,
         status: p.done ? 'done' : (p.progress > 0 ? 'doing' : 'todo'),
@@ -341,7 +347,24 @@ const MD = {
       if (keyIdx.when !== undefined && c[keyIdx.when]) {
         const w = String(c[keyIdx.when]);
         const dm = w.match(/(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})/) || w.match(/(\d{1,2}[-/.]\d{1,2})/);
-        if (dm) task.date = MD.normDate(dm[1]);
+        if (dm) {
+          task.date = MD.normDate(dm[1]);
+          /* 计划表格里的短日期多指未来（"7.2"=明年 7 月）；刚过去两周内才视为今年 */
+          if (!/\d{4}/.test(dm[1]) && task.date) {
+            const past = (U.parseDate(U.todayStr()) - U.parseDate(task.date)) / 86400000;
+            if (past > 14) task.date = (+task.date.slice(0, 4) + 1) + task.date.slice(4);
+          }
+        } else {
+          const mzh = w.match(/(\d{1,2})\s*月\s*(底|末|中|初)/);   /* "9月底" */
+          if (mzh) {
+            let y = new Date().getFullYear();
+            const m = +mzh[1];
+            /* 今年该月底若已过去超过两周 → 指明年 */
+            const eom = new Date(y, m, 0);
+            if (eom - new Date() < -14 * 86400000) y += 1;
+            task.date = y + '-' + U.pad(m) + '-01';
+          }
+        }
         const tm = w.match(/(\d{1,2}:\d{2})\s*[-–—~～至到]\s*(\d{1,2}:\d{2})/);
         if (tm) { task.start = tm[1]; task.end = tm[2]; }
       }
