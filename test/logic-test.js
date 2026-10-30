@@ -65,6 +65,49 @@ t('表格解析 2 行', tbl.tasks.length === 2);
 t('表格优先级', tbl.tasks[0].priority === 'high');
 t('表格日期+时间', tbl.tasks[1].date.endsWith('-10-25') && tbl.tasks[1].start === '14:00');
 
+/* 叙述型长文档（博士规划类）：只有勾选框算任务，说明列表与信息表不误收 */
+const narr = MD.parse(`# 博士规划
+
+| 项目信息 | 内容 |
+| --- | --- |
+| 制定日期 | 2026-10-14（v1.0） |
+| 总周期 | 博一 48 周 |
+
+**优先级铁律**：
+- **仿真是必选项**（就业硬门槛）——双仿真栈达标
+- **AI 是重要加分项**——春季完成
+
+## 三、方向A：SiC 纳米线热电性能（Sentaurus 必选主线）
+
+### 3.3 分周计划
+
+#### 第2周（10.15–10.21）：Sentaurus 集中入门
+- [ ] 摸清 SWB 工作台：新建工程、工具流、参数化节点
+- [ ] 跑通 2–3 个自带 example（如 Si 二极管 / MOSFET 的 I-V）
+  - 复现步骤见手册第 3 章
+- **DoD（技能点 1/5）**：能独立复现一条 example 曲线
+
+#### 第3周（10.22–10.28）：第一个自己的结构
+- [ ] SDE 建 2D 圆柱对称 SiC 纳米线
+- [x] 认知 SiC 材料参数体系
+
+## 十五、进度追踪清单
+- [ ] W2 Sentaurus 入门（技能点 1/5）
+
+## 周记模板（代码块内示例不得入任务）
+\`\`\`markdown
+## 完成情况
+- [ ] 任务1：示例占位
+\`\`\``);
+t('叙述文档：勾选框任务 5 条', narr.tasks.length === 5, 'got ' + narr.tasks.length);
+t('叙述文档：说明 bullet 不入任务', !narr.tasks.some(x => /就业硬门槛|加分项/.test(x.title)));
+t('叙述文档：信息表不入任务', !narr.tasks.some(x => /制定日期|总周期/.test(x.title)));
+t('叙述文档：代码块示例不入任务', !narr.tasks.some(x => /示例占位/.test(x.title)));
+t('叙述文档：中文编号章节成干净标签', narr.tasks.some(x => x.tags.includes('方向A')), JSON.stringify(narr.tasks[0] && narr.tasks[0].tags));
+t('叙述文档：周区间标题分配日期', narr.tasks.every(x => /-10-1[5-9]|-10-2[0-9]/.test(x.date)), narr.tasks.map(x => x.date).join(','));
+t('叙述文档：缩进行并入备注', /手册第 3 章/.test(narr.tasks[1].note));
+t('叙述文档：勾选状态保留', narr.tasks.some(x => x.status === 'done' && /材料参数/.test(x.title)));
+
 /* 快速添加 inline */
 console.log('== MD.inline ==');
 const q = MD.inline('写周报 14:00-15:00 !高 #产品 明天', {});

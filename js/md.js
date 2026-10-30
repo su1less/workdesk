@@ -152,12 +152,19 @@ const MD = {
         const cb = content.match(/^\[( |x|X|✓|☑)\]\s*(.*)$/);
         let checked = false;
         if (cb) { checked = cb[1] !== ' '; content = cb[2].trim(); }
-        /* 缩进更深 → 上一条任务的备注 */
+        /* 缩进更深 → 上一条任务的备注（先于下面的无勾选框过滤） */
         if (lastTask && indent >= ctx.baseIndent + 2) {
           const sm = content.match(/^\[( |x|X)\]\s*(.*)$/);
           const txt = sm ? sm[2].trim() : content;
           if (txt) lastTask.note = (lastTask.note ? lastTask.note + '\n' : '') + txt;
           continue;
+        }
+        /* 无勾选框的普通列表项：叙述型文档里是说明文字，不算任务；
+           仅当行内带明确日期或时间块时才按简写任务收（如“- 10-24 写周报”） */
+        if (!cb) {
+          const probe = MD.inline(content, ctx);
+          if (!probe.date && !probe.start) continue;
+          content = probe.title || content;
         }
         ctx.baseIndent = indent;
         const p = MD.inline(content, ctx);
@@ -230,6 +237,18 @@ const MD = {
       if (nd && !ds.includes(nd)) ds.push(nd);
     }
     if (ds.length >= 2) {
+      /* 区间一致性：文本顺序即时间顺序；跨年区间两端可能都被判成今年 */
+      for (let i = 1; i < ds.length; i++) {
+        const diff = (U.parseDate(ds[i]) - U.parseDate(ds[i - 1])) / 86400000;
+        if (diff < -100) ds[i] = (+ds[i].slice(0, 4) + 1) + ds[i].slice(4);
+      }
+      ds.sort();
+      /* 区间整体落在过去 → 计划不会排过去，整体顺延一年（如 10 月看"6.26–7.2"指明年） */
+      if (U.parseDate(ds[ds.length - 1]) < U.parseDate(today)) {
+        for (let i = 0; i < ds.length; i++) ds[i] = (+ds[i].slice(0, 4) + 1) + ds[i].slice(4);
+      }
+    }
+    if (ds.length >= 2) {
       ds.sort();
       ctx.range = [ds[0], ds[ds.length - 1]];
       ctx.date = ds[0];
@@ -257,8 +276,9 @@ const MD = {
           const base = /上周/.test(txt) ? U.addDays(U.weekStart(today), -7) : (/下周/.test(txt) ? U.addDays(U.weekStart(today), 7) : U.weekStart(today));
           ctx.date = U.addDays(base, '一二三四五六日天'.indexOf(wd[1]));
         } else {
-          /* 普通分组标题：沿用外层日期，标题作为默认标签 */
-          ctx.tag = txt.replace(/[【】\[\]]/g, '').slice(0, 10);
+          /* 普通分组标题：沿用外层日期，标题作为默认标签（"## 三、方向A：…" → "方向A"） */
+          const nm = txt.match(/^[一二三四五六七八九十百\d]+\s*[、.]\s*([^：:（(]{2,10})/);
+          ctx.tag = nm ? nm[1].trim() : txt.replace(/[【】\[\]]/g, '').slice(0, 10);
         }
       }
     }
@@ -273,7 +293,7 @@ const MD = {
     const head = cells(rows[0]);
     const keyIdx = {};
     head.forEach((h, i) => {
-      if (/任务|事项|内容|标题|计划|工作/.test(h)) keyIdx.title = i;
+      if (/任务|事项|待办|标题/.test(h)) keyIdx.title = i;
       else if (/日期|时间|日程|安排/.test(h)) keyIdx.when = i;
       else if (/优先/.test(h)) keyIdx.pri = i;
       else if (/进度|完成/.test(h)) keyIdx.prog = i;
